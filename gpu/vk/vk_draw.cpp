@@ -7583,6 +7583,12 @@ size_t warm_run(void (*progress)(size_t done, size_t total), size_t after) {
             const PipeNote& n = *w->notes[i];
             w->since[k] = steady_ns();
             w->current[k] = (int64_t)i;
+            {   // (a test, on a PC whose driver returns from everything: RX_VK_WARM_TEST_STUCK=<n> makes every n-th noted
+                // pipeline one the "driver" never returns from, so the rules above can be seen at work)
+                static const long long test_stuck = getenv("RX_VK_WARM_TEST_STUCK") ? atoll(getenv("RX_VK_WARM_TEST_STUCK")) : 0;
+                if (test_stuck > 0 && i % (size_t)test_stuck == (size_t)test_stuck - 1)
+                    for (;;) Sleep(1000);
+            }
             if (const Program* p = program_find(n.prog, n.variant))
                 if (const VkPipeline pl = build_graphics(*p, n.s, note_targets(n), (VkPrimitiveTopology)n.topo))
                     vkDestroyPipeline(dev.device, pl, nullptr), w->made++;
