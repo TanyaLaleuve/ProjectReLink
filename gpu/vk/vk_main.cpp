@@ -560,6 +560,12 @@ bool create_device() {
 
 } // namespace
 
+// (relink) "30, smooth" on the start-up screen: FIFO waits for until it is over. With FIFO and three images, AMD's present held
+// the queue for a refresh each time the screen was drawn (every 33 ms), and the shaders' preparation went from 3 minutes to hours
+// (an RX 6600 XT, 11-17: 1600 of 38809 in 5 minutes). The screen is drawn in the usual mode; the game's first frame makes the
+// swapchain again in FIFO (prepare_with_screen)
+static std::atomic<bool> fifo_held_for_startup{false};
+
 bool create_swapchain(uint32_t width, uint32_t height) {
     VkSurfaceCapabilitiesKHR caps;
     VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev.physical, dev.surface, &caps);
@@ -606,7 +612,7 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     // (as on a card or driver with vsync forced. relink: and the "30, smooth" frame rate, whose frames are each held for the
     // same number of refreshes by presenting them again: only FIFO shows every present, one a refresh)
-    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr || fps_low_cap() > 0;
+    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr || (fps_low_cap() > 0 && !fifo_held_for_startup.load());
     if (!force_fifo) {
         for (auto m : modes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;
@@ -817,6 +823,11 @@ void window_size(uint32_t* w, uint32_t* h) {
 void prepare_with_screen() {
     prep_ended = CreateEventA(nullptr, TRUE, FALSE, nullptr);
     prep_running.store(true);
+    if (fps_low_cap() && !getenv("RX_VK_FIFO") && dev.swap_extent.width && dev.swap_extent.height) {
+        // (the start-up screen's presents in the usual mode: the swapchain made again at its next present, present_image)
+        fifo_held_for_startup.store(true);
+        dev.swap_resize.store((uint64_t)dev.swap_extent.width << 32 | dev.swap_extent.height, std::memory_order_release);
+    }
     std::thread worker([] {
         const bool update = prepare_is_update();   // (an update, RX_VK_PREPARE_BACKGROUND=1: what the notes name now, the rest in play)
         const bool prepared = !update && prepare_run(prep_progress, false);
@@ -898,6 +909,11 @@ void prepare_with_screen() {
     }
     startup_screen(nullptr);
     prep_running.store(false);
+    if (fifo_held_for_startup.exchange(false)) {   // ("30, smooth": FIFO from the game's first frame on)
+        const uint64_t want = dev.swap_resize.load(std::memory_order_acquire);
+        if (!want && dev.swap_extent.width && dev.swap_extent.height)
+            dev.swap_resize.store((uint64_t)dev.swap_extent.width << 32 | dev.swap_extent.height, std::memory_order_release);
+    }
     logf("vk: start-up: the shaders took %.1f s", std::chrono::duration<double>(clock::now() - t0).count());
 }
 bool started_up() {
