@@ -29,6 +29,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -609,15 +610,85 @@ def chunk_costs(gen):
         return {}
 
 
+# (relink) The game chunks that hold a giant function. The vector float code around 0x81b8..0x81c5 lifts to functions of about
+# 2 MB of C (20000 lines) each, two or three to a chunk, and the machine code's early loop-invariant motion hoisted their
+# invariants out of a function-wide loop: every one then live through the whole function, and the PHI elimination, the
+# live intervals and the register allocator after it took 549 s for one such function alone (clang 23, -O1; -ftime-report:
+# 420 s of it in those four). The hot pieces already turn the hoisting down (-disable-hoisting-to-hotter-blocks=all, above);
+# the cold chunks had nothing: code_016*.c, 15 MB, were 4217 of a full build's 14530 compile seconds and its last 30 minutes.
+# For a chunk whose largest function is GIANT_FN_BYTES of C or more, -disable-machine-licm: code_016_1.c 1624 s -> 356 s, its
+# object the same size; on an ordinary chunk (code_020.c, 7731 functions) the flag changes neither the time (82 s) nor the
+# object. The IR's own loop-invariant motion (LICMPass) still runs. Hot pieces only with RX_GIANT_MLICM_HOT=1 (their code is
+# what play runs most, measured separately). RX_GIANT_FN_KB=<KB> sets the size, 0 turns it off
+GIANT_FN_BYTES = int(os.environ.get("RX_GIANT_FN_KB", "1024")) * 1024
+GIANT_HOT = os.environ.get("RX_GIANT_MLICM_HOT", "0") not in ("", "0")
+GIANT_SEEN = []
+
+
+def largest_function(src):
+    """The largest lifted function in a chunk, in bytes of C (the distance between two `void f_` starts)"""
+    data = open(src, "rb").read()
+    starts = [m.start() for m in re.finditer(rb"\nvoid f_[0-9a-f]+\(Ctx", data)] + [len(data)]
+    return max((b - a for a, b in zip(starts, starts[1:])), default=0)
+
+
+def giant_flags(src, fl):
+    name = os.path.basename(src)
+    if not GIANT_FN_BYTES or not name.startswith("code_") or (name.startswith("code_hot") and not GIANT_HOT):
+        return fl
+    biggest = largest_function(src)
+    if biggest < GIANT_FN_BYTES:
+        return fl
+    GIANT_SEEN.append((name, biggest))
+    return fl + ["-mllvm", "-disable-machine-licm"]
+
+
+def longest_first(jobs):
+    """(relink) The compile's order, the longest first. The lift's estimate (compile_cost) ranks functions by the square of
+    their size, and the vector code of code_016*.c (2 MB functions that compile far slower than their size says) started
+    after every other chunk: on 8 threads they finished alone, 20 minutes after the rest. With this PC's own seconds for each
+    file (make_game.py's RELINK_TIMES: every build after the first) the order is those seconds; on a first build, the chunks
+    with a giant function (giant_flags) go right after the hot pieces. RX_COMPILE_ORDER=lift: the lift's order alone"""
+    if os.environ.get("RX_COMPILE_ORDER") == "lift":
+        return jobs
+    history = times_from(os.environ["RELINK_TIMES"]) if os.environ.get("RELINK_TIMES") else {}
+    game = [j for j in jobs if os.path.basename(j[1]).startswith("code_")]
+    if history and sum(1 for j in game if os.path.basename(j[1]) in history) * 2 >= len(game):
+        seconds = per_file_seconds(jobs, history)
+        order = sorted(range(len(jobs)), key=lambda i: -seconds[i])
+        print("compile order: longest first by this PC's own times (%d of %d files measured before)" % (
+            sum(1 for j in jobs if os.path.basename(j[1]) in history), len(jobs)), flush=True)
+        return [jobs[i] for i in order]
+    giant = {n for n, _ in GIANT_SEEN}
+    if not giant:
+        return jobs
+    hot = [j for j in jobs if os.path.basename(j[1]).startswith("code_hot")]
+    big = [j for j in jobs if os.path.basename(j[1]) in giant]
+    rest = [j for j in jobs if j not in hot and j not in big]
+    return hot + big + rest
+
+
 def compile_cost(src, costs):
     """A file's compile time, roughly (see HOT_COST)"""
     name = os.path.basename(src)
     return costs.get(name, os.path.getsize(src)) * (HOT_COST if name.startswith("code_hot") else 1)
 
 
+# (relink) The object keys this build's objects have, written beside the cache (objcache/in_use.txt) once it compiled:
+# make_game.py keeps those objects and lets the others go, so a player's next update compiles only the chunks that changed
+KEYS_IN_USE = set()
+
+
+def write_keys_in_use():
+    os.makedirs(OBJ_CACHE, exist_ok=True)
+    with open(os.path.join(OBJ_CACHE, "in_use.txt"), "w", newline="\n") as f:
+        f.write("".join(k + "\n" for k in sorted(KEYS_IN_USE)))
+
+
 def compile_one(job):
     cc, src, obj, fl, deps = job
     key = PLANNED.get((src, obj)) or object_key(src, fl, deps)
+    KEYS_IN_USE.add(key)
     stamp = obj + ".sha1"
     if os.path.exists(obj) and os.path.exists(stamp) and open(stamp).read() == key:
         return src, 0.0, None
@@ -738,7 +809,7 @@ def main():
         with open(PGO, "rb") as f:
             hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DRELINK_PROFILE_SHA1=" + hashlib.sha1(f.read()).hexdigest()[:16]]
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
-             hot_fl if os.path.basename(s).startswith("code_hot") else fl,
+             giant_flags(s, hot_fl if os.path.basename(s).startswith("code_hot") else fl),
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
     # (issue 624) what the game code's object keys are made of, as short fingerprints: two builds' logs side by side say which part
     # changed when an update compiled everything again (the headers, the flags, the profile, or the lifted code itself)
@@ -750,6 +821,10 @@ def main():
     print("object keys: game-code headers %s, flags %s, hot flags %s, lifted code %s (%d files)" % (
         fp(deps), fp(norm(fl)), fp(norm(hot_fl)), code.hexdigest()[:10],
         sum(1 for x in srcs if os.path.basename(x).startswith("code_"))), flush=True)
+    if GIANT_SEEN:
+        print("giant functions: %d chunks without the machine code's loop-invariant motion (%s)" % (
+            len(GIANT_SEEN), ", ".join("%s %d KB" % (n, b >> 10) for n, b in sorted(GIANT_SEEN))), flush=True)
+    jobs = longest_first(jobs)
     # the runtime: ordinary C at -O2, with its own headers (any host/*.h change rebuilds all of it)
     host_fl = target() + CPU + (["-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + \
         ["-I" + HOST, "-I" + rt64, "-I" + gen, "-Wno-everything", "-O2", "-g0", "-mcx16", "-DA64_POLLING"] + WRITE_TRACK
@@ -926,6 +1001,7 @@ def main():
     print("compiled in %.0fs, %d failed" % (time.time() - t0, still), flush=True)
     if still:
         return 1
+    write_keys_in_use()
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
     rsp = os.path.join(out, "objs.rsp")
