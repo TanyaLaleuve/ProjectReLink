@@ -5,6 +5,18 @@
 
 namespace mkwvk {
 
+// (relink) Option numbers the host asks for (rx_option, host/rx_backend.c), kept here and not in vk_api.h: that file is part
+// of the shader cache's stamp, and a line added there makes every player prepare their shaders again at the update.
+// The Controls tab's Left / Right stick dead zone, in percent of the stick's travel (host/hos_stick.h)
+enum { HOS_OPT_DEADZONE_L = 10, HOS_OPT_DEADZONE_R = 11 };
+// the game frames the display has taken, modulo 2^30 (host/nn_vi.c paces HOS_FPS_CAP's frames by it)
+enum { HOS_OPT_PRESENTS_SHOWN = 12 };
+// the Graphics tab's Field of view, in percent of the game's camera angle (host/nn_vi.c, nx2/oot_fov.py)
+enum { HOS_OPT_FOV = 13 };
+// HOS_FPS_CAP's frames as the display shows them, in thousandths of a frame a second (100 Hz holding 3 refreshes: 33333);
+// 0 when the display does not hold them (host/nn_vi.c paces to it)
+enum { HOS_OPT_LOW_CAP_MFPS = 14 };
+
 // (out of the box every feature is off: what the game does on its own. The ini beside the executable keeps a player's choices)
 struct Options {
     int framegen = 0;     // made frames: 0 off, or 2, 3, 4 times the game's frames

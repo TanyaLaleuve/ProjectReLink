@@ -30,7 +30,7 @@ static inline int hos_stick_deadzone_percent(int right) {
         env[right] = e && *e ? atoi(e) : -1;
     }
     int rx_option(int id, int otherwise);
-    int p = env[right] >= 0 ? env[right] : rx_option(right ? 11 : 10, 24);   /* (HOS_OPT_DEADZONE_L / _R: gpu/vk/vk_api.h) */
+    int p = env[right] >= 0 ? env[right] : rx_option(right ? 11 : 10, 24);   /* (HOS_OPT_DEADZONE_L / _R: gpu/vk/vk_menu.h) */
     return p < 0 ? 0 : p > 90 ? 90 : p;
 }
 
