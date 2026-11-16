@@ -536,6 +536,8 @@ Row rows[] = {
      "Runs the game as if the console were undocked. Applies after a restart.", hn_handheld, true},
     {TAB_GRAPHICS, "Ultrawide", &opts.ultrawide, 0, 1, 1, tx_ultrawide,
      "The camera's shape on a screen wider than 16:9. Applies after a restart.", hn_ultrawide, true},
+    {TAB_GRAPHICS, "Field of view", &opts.fov, 70, 150, 5, tx_percent,
+     "How wide the camera sees, in percent of the game's own angle. Above 100% shows more around Link.", nullptr, false, true},
     {TAB_GRAPHICS, "Robust buffers", &opts.robust, 0, 2, 1, tx_robust,
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
@@ -573,6 +575,12 @@ Row rows[] = {
      "Inverts vertical look (up/down) on the right analog stick.", nullptr, false, true},
     {TAB_CONTROLS, "Rumble strength", &opts.rumble, 0, 150, 25, tx_rumble,
      "How strongly the controller rumbles, in percent of the game's rumble. Off turns it off.", nullptr, false, true},
+    {TAB_CONTROLS, "Left stick dead zone", &opts.deadzone_l, 0, 50, 2, tx_percent,
+     "How far the left stick must move before Link walks. Raise it if Link moves on his own (stick drift).", nullptr,
+     false, true},
+    {TAB_CONTROLS, "Right stick dead zone", &opts.deadzone_r, 0, 50, 2, tx_percent,
+     "How far the right stick must move before the camera turns. Raise it if the camera drifts on its own.", nullptr,
+     false, true},
     {TAB_CONTROLS, "Motion controls", &opts.gyro, 0, 1, 1, tx_gyro,
      "Aiming and looking with the controller's gyroscope where the game uses motion, as on the Switch.", hn_gyro},
     {TAB_CONTROLS, "Motion sensitivity X", &opts.gyro_sens_x, 10, 300, 10, tx_percent,
@@ -790,7 +798,7 @@ int cheat_value_l[kCheatRows];
 int list_value_l[kTeleportLines];
 bool is_slider(const Row& r) { return r.value == &opts.sharpness || r.value == &opts.mouse_sens || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y; }
 /// (a scale: the arrows, a click and the wheel stop at its ends; Rumble strength would go from Off to its strongest)
-bool stops_at_ends(const Row& r) { return r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y; }
+bool stops_at_ends(const Row& r) { return r.value == &opts.mouse_sens || r.value == &opts.rumble || r.value == &opts.gyro_sens_x || r.value == &opts.gyro_sens_y || r.value == &opts.deadzone_l || r.value == &opts.deadzone_r || r.value == &opts.fov; }
 /// (the ini's Rumble strength on the menu's steps: 0 to 150, the nearest 25)
 int rumble_step(int v) { return (std::min(std::max(v, 0), 150) + 12) / 25 * 25; }
 std::string ini_path() {
@@ -2124,6 +2132,9 @@ void menu_init() {
         }
         if (!has_resolution && old_dynres >= 0) opts.resolution = old_dynres ? 0 : 1;
         opts.rumble = rumble_step(opts.rumble);   // (a hand-edited 60: 50, on the arrows' steps)
+        opts.deadzone_l = std::min(std::max(opts.deadzone_l, 0), 50) / 2 * 2;   // (relink: host/hos_stick.h)
+        opts.deadzone_r = std::min(std::max(opts.deadzone_r, 0), 50) / 2 * 2;
+        opts.fov = std::min(std::max(opts.fov, 70), 150) / 5 * 5;   // (relink: nx2/oot_fov.py)
         // (Game speed is Real time by default now: Per frame played at half speed at 30 fps, the "slow motion" players
         // reported. An options file from before kept the old default whether chosen or not: Real time for it too)
         if (!v2) opts.realtime = 1;

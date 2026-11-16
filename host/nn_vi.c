@@ -137,12 +137,38 @@ static int display_hz(void) {
 #endif
     return hz;
 }
+/* (relink) HOS_FPS_CAP=<20-59>, which the launcher passes as 30 for its "30, smooth" frame rate: a cap under the game's 60,
+   each frame shown for the same number of display refreshes (the renderer presents it again on a vsynced swapchain:
+   gpu/vk/vk_replay.cpp present_image) and the next one started once the display has taken the last (hos_vi_native_acquire),
+   game time following the clock whatever Game speed says. 0: none */
+static int fps_low_cap(void) {
+    static int low = -1;
+    if (low < 0) {
+        low = getenv("HOS_FPS_CAP") ? atoi(getenv("HOS_FPS_CAP")) : 0;
+        low = low <= 0 || low >= 60 ? 0 : low < 20 ? 20 : low;
+    }
+    return low;
+}
+/* (relink) HOS_FPS_CAP's rate as the display shows it: a 30 cap on a 100 Hz display holds each frame 3 refreshes, 33.3 fps
+   (gpu/vk option 14), and a timer at 30.0 left the display a refresh short every other frame: 30 and 40 ms frames in turn.
+   The cap's own rate when the renderer holds nothing (no window) */
+static double low_cap_effective(void) {
+    int rx_option(int id, int otherwise);
+    const int mfps = rx_option(14, 0);
+    return mfps > 0 ? mfps / 1000.0 : (double)fps_low_cap();
+}
 static int fps_max(void) {
     static int env = -1;
     if (env < 0) env = getenv("HOS_FPS_MAX") ? atoi(getenv("HOS_FPS_MAX")) : 0;
     static int unlocked = -1;   /* (relink: HOS_FPS_UNLOCKED=1, which the launcher passes for Unlocked; no in-game row) */
     if (unlocked < 0) unlocked = getenv("HOS_FPS_UNLOCKED") && atoi(getenv("HOS_FPS_UNLOCKED")) != 0;
     int cap = 60;
+    if (fps_low_cap() && !unlocked && env <= 60) {
+        cap = fps_low_cap();
+        static int told_low;
+        if (!told_low++) hos_log("vi: frame rate cap %d fps (HOS_FPS_CAP), each frame held for the same number of refreshes", cap);
+        return cap;
+    }
     if (unlocked || env > 60) {
         cap = env > 60 ? env : display_hz();
         cap = cap < 60 ? 60 : cap > 240 ? 240 : cap;
@@ -157,6 +183,14 @@ static int fps_max(void) {
 }
 static int64_t frame_period(void) {   /* (the display interval the frames are paced to) */
     const int cap = fps_max();
+    if (cap < 60) {   /* (HOS_FPS_CAP: its period, or the game's interval when that is longer) */
+        /* (with the display holding the frames, 3% under its period: the display's own clock, through presents_shown in
+           hos_vi_native_acquire, is what paces them, and the timer never makes it wait a refresh more) */
+        int rx_option(int id, int otherwise);
+        const int held = rx_option(14, 0) > 0;
+        const int64_t low = (int64_t)(1e9 / low_cap_effective() * (held ? 0.97 : 1.0)), game = 1000000000LL / 60 * present_interval;
+        return low > game ? low : game;
+    }
     return present_interval == 1 && cap > 60 ? 1000000000LL / cap : 1000000000LL / 60 * present_interval;
 }
 static volatile LONG64 presents;
@@ -196,6 +230,32 @@ void hos_vi_native_acquire(int active) {
     }
     const int64_t now = hos_now_ns();
     if (until > now) hos_sleep_ns(until - now);
+    if (fps_low_cap()) {
+        /* (HOS_FPS_CAP) The display's own clock paces the frames: the renderer counts the presents the display has taken
+           (option 12, gpu/vk/vk_replay.cpp present_image, each held for the same number of refreshes on a vsynced swapchain),
+           and the next frame starts once all but one of the game's presents are among them. A timer alone at 30.000 fps
+           against a 59.94 Hz display gained a frame every 16 s: a queued frame more of delay, then a dropped one. The two
+           counts are compared from where they stood the first time (presents before the renderer started) and again from
+           where they stand after a wait gave up (a present the renderer could not make: the window resized, minimized):
+           at most 50 ms here, and a renderer that does not count leaves the timer above alone */
+        int rx_option(int id, int otherwise);
+        static int64_t offset = INT64_MIN;
+        static long long waits_gave_up;
+        const int64_t mine = presents, give_up = hos_now_ns() + 50000000LL;
+        int shown = rx_option(12, -1);
+        if (shown >= 0) {
+            if (offset == INT64_MIN) offset = mine - 1 - shown;
+            while ((int64_t)shown + offset < mine - 1) {
+                if (hos_now_ns() >= give_up) {
+                    offset = mine - 1 - shown;
+                    if (waits_gave_up++ < 8) hos_log("vi: the display did not take a frame in 50 ms: counted again from here");
+                    break;
+                }
+                hos_sleep_ns(500000);
+                shown = rx_option(12, -1);
+            }
+        }
+    }
 }
 /* (mkw-recomp) MKW's frame pacer (0x806bcbb0, x19 when it sets the interval: nvn_native.c): its measured frame time
    (+0x128, ticks), its running excess (+0x218) and interval (+0x214), logged with the frame rate */
@@ -249,6 +309,9 @@ volatile int hos_fixed_resolution = 0;   /* (the lifted code reads these: nx2/oo
 volatile uint32_t hos_fixed_scale_bits = 0x3f800000;   /* (HOS_RES_SCALE: the fixed path's scale) */
 volatile int hos_dynres_runs = 0;   /* (the dynamic path's frames: it fills fields the 3D reads, +8 +16 +168) */
 volatile float hos_text_scale = 1.0f;   /* (the letters' clock of a text pane, f_80b1e140: nx2/oot_patches.py) */
+/* (relink) The camera's vertical angle is multiplied by this as it goes into the projection (nx2/oot_fov.py): the Insert menu's
+   Field of view in percent (option 13), HOS_FOV=<percent> over it; 1 as the game has it */
+volatile float hos_fov_scale = 1.0f;
 /* The Insert menu's Text speed (0 Normal, 1 2x, 2 4x, 3 Instant), HOS_TEXT_SPEED=<0..3> over it: what the time of a letter
    animation's step is multiplied by. Instant: the page at once, as the game's own skip on A */
 static float text_scale(const char *env, int menu) {
@@ -266,6 +329,18 @@ static void realtime_step(int64_t now) {
         static int looked;
         if (!looked) looked = 1, env = getenv("HOS_TEXT_SPEED");
         hos_text_scale = text_scale(env, rx_option(5, 0));
+    }
+    {   /* (relink) the field of view: nx2/oot_fov.py */
+        static int env = -2;
+        if (env == -2) env = getenv("HOS_FOV") && *getenv("HOS_FOV") ? atoi(getenv("HOS_FOV")) : -1;
+        int pct = env > 0 ? env : rx_option(13, 100);
+        pct = pct < 50 ? 50 : pct > 200 ? 200 : pct;
+        hos_fov_scale = pct / 100.0f;
+        static int told = -1;
+        if (pct != told) {
+            if (told != -1 || pct != 100) hos_log("vi: field of view %d%% of the game's", pct);
+            told = pct;
+        }
     }
     {   /* (the Insert menu's Resolution: the fixed path's scale in 1/10000, live; HOS_RES_SCALE
            below stays over it) */
@@ -314,7 +389,7 @@ static void realtime_step(int64_t now) {
         else if (target && *limit > 0 && *limit < target) *limit = target;
     }
     const int cap = fps_max();
-    if (!rx_option(0, 1) && cap <= 60) {   /* (the Insert menu: per frame) */
+    if (!rx_option(0, 1) && cap == 60) {   /* (the Insert menu: per frame. Not under HOS_FPS_CAP: at 30 the game ran at half speed) */
         int *slot = (int *)GP(mod + 0x2c8);
         if (*slot >= 15 && *slot <= 60) *slot = 60;
         return;
@@ -337,10 +412,13 @@ static void realtime_step(int64_t now) {
     double sum = 0;
     for (unsigned i = 0; i < count; i++) sum += samples[i];
     double ratio = sum / count * 60.0 + carry;
-    const double least = 60.0 / cap;   /* (unlocked: steps shorter than 1/60 s) */
+    /* (HOS_FPS_CAP: the rate the display shows, 33.3 for 30 at 100 Hz: held to 30 the game stepped 1/30 s every 30 ms, 11% fast) */
+    const double eff = cap < 60 ? low_cap_effective() : (double)cap;
+    const int top = (int)(eff + 0.999);
+    const double least = 60.0 / eff;   /* (unlocked: steps shorter than 1/60 s) */
     ratio = ratio < least ? least : ratio > 4.0 ? 4.0 : ratio;
     int fps = (int)(60.0 / ratio + 0.5);
-    fps = fps < 15 ? 15 : fps > cap ? cap : fps;
+    fps = fps < 15 ? 15 : fps > top ? top : fps;
     int *slot = (int *)GP(mod + 0x2c8);
     if (*slot < 15 || *slot > 240) {
         static int logged;

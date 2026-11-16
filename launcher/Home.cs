@@ -94,9 +94,12 @@ public partial class MainWindow
 
         // ---- smoothness
         FrameRateGroup = ChoiceRow(RowsSmooth, L("Images par seconde", "Frames per second"),
-                  L("Débloqué : jusqu'à la fréquence de l'écran, et le jeu suit le temps réel. Sur un écran à fréquence fixe, 60 est plus régulier.",
-                    "Unlocked: up to the display's rate, and the game follows real time. On a fixed-rate display, 60 is steadier."),
-                  "FrameRate", (0, L("60, comme la console", "60, as on the console")), (1, L("Débloqué", "Unlocked")));
+                  L("Débloqué : jusqu'à la fréquence de l'écran, et le jeu suit le temps réel. Sur un écran à fréquence fixe, 60 est plus régulier. " +
+                    "30, fluide : chaque image reste affichée le même temps (synchronisée à l'écran), pour les PC qui n'atteignent pas 60.",
+                    "Unlocked: up to the display's rate, and the game follows real time. On a fixed-rate display, 60 is steadier. " +
+                    "30, smooth: every frame stays on screen for the same time (synced to the display), for PCs that do not reach 60."),
+                  "FrameRate", (0, L("60, comme la console", "60, as on the console")), (1, L("Débloqué", "Unlocked")),
+                  (2, L("30, fluide", "30, smooth")));
         SpeedGroup = ChoiceRow(RowsSmooth, L("Vitesse du jeu", "Game speed"),
                   L("Temps réel : si une image tarde, le jeu ne ralentit pas.", "Real time: when a frame is late, the game does not slow down."),
                   "Speed", (0, L("Par image", "By frame")), (1, L("Temps réel", "Real time")));
@@ -286,7 +289,12 @@ public partial class MainWindow
         var parts = new List<string> { s.Fullscreen != 0 ? L("plein écran", "full screen") : L("fenêtre", "window") };
         if (s.Display60 && origHz != 60 && origHz > 0 && display60Possible && s.FrameGeneration < 2) parts.Add(L("écran à 60 Hz", "display at 60 Hz"));
         if (s.FrameGeneration >= 2) parts.Add(L($"images ×{s.FrameGeneration}", $"frames ×{s.FrameGeneration}"));
-        else parts.Add(s.FrameRate != 0 ? L("images débloquées", "unlocked frame rate") : L("60 images par seconde", "60 frames a second"));
+        else parts.Add(s.FrameRate switch
+        {
+            1 => L("images débloquées", "unlocked frame rate"),
+            2 => L("30 images par seconde, régulières", "30 even frames a second"),
+            _ => L("60 images par seconde", "60 frames a second"),
+        });
         var line = string.Join(", ", parts);
         return char.ToUpper(line[0]) + line[1..] + ".";
     }
@@ -417,7 +425,8 @@ public partial class MainWindow
         psi.Environment["RELINK_NO_UPDATE_CHECK"] = "1";   // (the launcher already looked: the game does not ask again)
         if (!s.Audio) psi.Environment["HOS_AUDIO"] = "0";
         if (s.InvertY) psi.Environment["HOS_MOUSE_INVERT_Y"] = "1";
-        if (s.FrameRate != 0) psi.Environment["HOS_FPS_UNLOCKED"] = "1";   // (the game reads the unlocked rate from here only: host/nn_vi.c)
+        if (s.FrameRate == 1) psi.Environment["HOS_FPS_UNLOCKED"] = "1";   // (the game reads the unlocked rate from here only: host/nn_vi.c)
+        if (s.FrameRate == 2) psi.Environment["HOS_FPS_CAP"] = "30";       // (30, smooth: host/nn_vi.c, gpu/vk/vk_main.cpp low_cap_repeats)
         try
         {
             game = Process.Start(psi);

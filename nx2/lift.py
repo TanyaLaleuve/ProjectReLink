@@ -175,6 +175,8 @@ def main():
             oot_jitter.install(L, img)
         import oot_occlusion   # (no occlusion queries when RELINK_OCCLUSION_OFF=1: Fritchii's Occlusion Off)
         oot_occlusion.install(L, img)
+        import oot_fov   # (relink) the Insert menu's Field of view: the camera's angle scaled as it goes into the projection
+        oot_fov.install(L, img)
     L.discover(max_insns=a.max_func)
     print("discovered %d functions (%.0fs)" % (len(L.funcs), time.time() - t0))
     total = coverage(L, img, img_dir)

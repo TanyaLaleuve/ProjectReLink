@@ -377,6 +377,12 @@ bool create_device() {
         (void)dp;       //  NVIDIA's driver on Windows. RX_VK_PRESENT_QUEUE=1: on)
 #endif
         if (const char* e = getenv("RX_VK_PRESENT_QUEUE")) want = atoi(e) != 0;
+        // (relink: ReShade, and RenoDX through it, draws its effects and its HDR pass on the queue the presents are made on: a
+        // compute family's has no graphics, and ReShade turns itself off there. reshade_compat)
+        if (want && reshade_compat()) {
+            want = false;
+            logf("vk: ReShade / RenoDX: the presents stay on the graphics queue (RX_VK_PRESENT_QUEUE left off)");
+        }
         for (uint32_t i = 0; want && i < n && compute_family == UINT32_MAX; i++)
             if ((families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
                 compute_family = i;
@@ -598,7 +604,9 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     if (result != VK_SUCCESS || modes.empty())
         logf("vk: querying present modes failed (VkResult %d, count %u); trying mandatory FIFO mode", (int)result, n);
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
-    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr;   // (as on a card or driver with vsync forced)
+    // (as on a card or driver with vsync forced. relink: and the "30, smooth" frame rate, whose frames are each held for the
+    // same number of refreshes by presenting them again: only FIFO shows every present, one a refresh)
+    const bool force_fifo = getenv("RX_VK_FIFO") != nullptr || fps_low_cap() > 0;
     if (!force_fifo) {
         for (auto m : modes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;
@@ -617,6 +625,9 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     ci.surface = dev.surface;
     ci.minImageCount = std::max(caps.minImageCount, 4u);   // (relink: mailbox with frame interpolation: an image always free)
+    // (relink: "30, smooth": three. Each frame takes two of the queue's places, and a fourth image let a third frame queue: 50 ms
+    // more of delay for nothing, the display's pace being the frames' anyway)
+    if (fps_low_cap() && mode == VK_PRESENT_MODE_FIFO_KHR) ci.minImageCount = std::max(caps.minImageCount, 3u);
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.imageFormat = fmt.format;
     ci.imageColorSpace = fmt.colorSpace;
@@ -626,6 +637,12 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     // The renderer copies into swapchain images. Readback is optional and only available on surfaces that allow it.
     if (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
         ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // (relink) ReShade / RenoDX: their effects and RenoDX's HDR output pass draw into the swapchain's images (reshade_compat)
+    if (reshade_compat()) {
+        // (not storage: an sRGB swapchain format has no storage use, whatever the surface lists, and the swapchain would fail)
+        for (VkImageUsageFlags u : {VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_USAGE_SAMPLED_BIT})
+            if (caps.supportedUsageFlags & u) ci.imageUsage |= u;
+    }
     ci.preTransform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     if (!(caps.supportedCompositeAlpha & ci.compositeAlpha)) {
@@ -673,6 +690,7 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     dev.swapchain = sc;
     dev.swap_rendered = std::move(rendered);
     dev.swap_format = fmt.format;
+    dev.swap_mode = mode;
     dev.swap_extent = {width, height};
     vkGetSwapchainImagesKHR(dev.device, sc, &n, nullptr);
     dev.swap_images.resize(n);
@@ -684,8 +702,75 @@ bool create_swapchain(uint32_t width, uint32_t height) {
 }
 
 namespace {
-
 HWND main_window = nullptr;
+} // namespace
+
+std::atomic<int> presents_shown{0};
+std::atomic<int> low_cap_mfps{0};
+bool reshade_compat() {
+    // (asked when the device is made, after the instance: ReShade's Vulkan layer, an implicit layer the ReShade installer registers
+    // for relink-game.exe, has loaded its DLL by then)
+    static int on = -1;
+    if (on >= 0) return on != 0;
+    const char* e = getenv("RX_VK_RESHADE");
+    if (e && *e) {
+        on = atoi(e) != 0;
+    } else {
+#ifdef _WIN32
+        on = GetModuleHandleA("ReShade64.dll") != nullptr || GetModuleHandleA("ReShade.dll") != nullptr;
+#else
+        on = 0;
+#endif
+    }
+    if (on) logf("vk: ReShade / RenoDX compatibility on (%s): presents on the graphics queue, the swapchain's images drawable",
+                 e && *e ? "RX_VK_RESHADE" : "ReShade's layer is loaded");
+    return on != 0;
+}
+int fps_low_cap() {
+    static const int cap = [] {
+        const char* e = getenv("HOS_FPS_CAP");
+        const char* u = getenv("HOS_FPS_UNLOCKED");
+        int v = e && *e ? atoi(e) : 0;
+        if (u && atoi(u) != 0) v = 0;   // (Unlocked wins, as host/nn_vi.c has it)
+        return v <= 0 || v >= 60 ? 0 : v < 20 ? 20 : v;
+    }();
+    return cap;
+}
+int display_refresh_hz() {
+#ifdef _WIN32
+    // (read again every 120 calls: the window may go to another display)
+    static int hz = 0, calls = 0;
+    if (hz && ++calls % 120) return hz;
+    HMONITOR m = main_window ? MonitorFromWindow(main_window, MONITOR_DEFAULTTOPRIMARY) : nullptr;
+    MONITORINFOEXA mi{};
+    mi.cbSize = sizeof mi;
+    const char* device = m && GetMonitorInfoA(m, (MONITORINFO*)&mi) ? mi.szDevice : nullptr;
+    DEVMODEA dm{};
+    dm.dmSize = sizeof dm;
+    const int reported = EnumDisplaySettingsA(device, ENUM_CURRENT_SETTINGS, &dm) ? (int)dm.dmDisplayFrequency : 0;
+    hz = reported > 1 ? reported : 60;
+    return hz;
+#else
+    return 60;
+#endif
+}
+int low_cap_repeats() {
+    const int cap = fps_low_cap();
+    if (!cap || dev.offscreen || dev.swap_mode != VK_PRESENT_MODE_FIFO_KHR || framegen_on()) return 1;
+    // (the refreshes nearest the cap's period: 60 and 120 Hz hold 30 fps exactly; 144 Hz holds each frame 5 refreshes, 28.8 fps)
+    const int hz = display_refresh_hz();
+    const int repeats = (hz + cap / 2) / cap;
+    low_cap_mfps.store(hz * 1000 / std::max(repeats, 1), std::memory_order_relaxed);   // (the rate the display shows: host/nn_vi.c)
+    static int told;
+    if (repeats != told) {
+        told = repeats;
+        logf("vk: %d fps cap: each frame held for %d refresh%s of the %d Hz display (%.1f fps)", cap, std::max(repeats, 1),
+             repeats > 1 ? "es" : "", hz, (double)hz / std::max(repeats, 1));
+    }
+    return std::min(std::max(repeats, 1), 8);
+}
+
+namespace {
 // (relink) relink --prepare-shaders (a builder, after a build): the same work with no game, its progress as
 // "@@progress" lines on stdout. A skip there leaves relink_prepare_skipped beside the game: its own starts then
 // leave the work out too (what was not prepared is built when first drawn), until a --prepare-shaders run ends it

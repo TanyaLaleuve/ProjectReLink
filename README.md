@@ -107,6 +107,25 @@ ZR; +Bombs the bombs too; +Tools the hookshot, hammer, slingshot and boomerang t
 `HOS_ITEM_WHEEL=0` or `1` and `HOS_CYCLE_ITEMS=0` to `4` in `relink_env.txt` stand
 in for the two rows.
 
+**30, smooth** (launcher, Smoothness tab, Frames per second): for PCs that do not hold 60. Every frame stays on screen for
+the same number of refreshes (2 on a 60 or 120 Hz display), with vsync, and the game waits for the display before it starts
+the next frame, so the 30 frames are even instead of swinging between 16 and 50 ms. Game time follows the clock. On a 144 Hz
+display each frame is held 5 refreshes (28.8 fps). `HOS_FPS_CAP=<20-59>` in `relink_env.txt` sets another cap the same way.
+
+**Field of view** (Insert menu, Graphics, 70 to 150 %): the camera's angle in percent of the game's own; the culling follows
+it. `HOS_FOV=<percent>` in `relink_env.txt` stands in for the row.
+
+**Left / Right stick dead zone** (Insert menu, Controls, 0 to 50 %, 24 by default, as before): raise it if Link walks or the
+camera turns on its own (stick drift). The dead zone is round now (a diagonal push near the centre is no longer cut on one
+axis) and what is past it starts just past the game's own dead zone. `HOS_STICK_DEADZONE_L` / `_R=<percent>` stand in for
+the rows.
+
+**ReShade and RenoDX**: ReLink renders through Vulkan, so ReShade must be installed with its Vulkan API and add-on support for
+`relink-game.exe` (in the game folder's `bin`). When ReShade's layer is loaded the game keeps its presents on the graphics queue
+and makes the swapchain's images drawable, which ReShade's effects and RenoDX's HDR output need (`RX_VK_RESHADE=1` forces this,
+`0` turns it off). A RenoDX mod for this game still has to be written for its shaders: ReLink only removes what stopped
+ReShade from drawing.
+
 **Travel** (on the Cheats page: `HOS_OOT_CHEATS=1` in `relink_env.txt` shows the Gameplay tab's **Cheats** row, and
 Travel is that page's last row): a page of 190 places to go to, villages, dungeons' entrances, shops, warp points and story spots,
 grouped by area, for Link's age (Tab or X shows the other age's: going there makes Link that age). Once you have opened the

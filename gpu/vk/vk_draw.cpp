@@ -1862,18 +1862,25 @@ VkSampler sampler_make(int id, bool compare);
 VkSampler sampler_for(int id, bool compare) {
     static const bool on = !getenv("RX_VK_SAMPLER_CACHE") || atoi(getenv("RX_VK_SAMPLER_CACHE")) != 0;
     if (!on || id < 0 || id >= 4096) return sampler_make(id, compare);
-    struct Entry { uint64_t gen; VkSampler s; };
+    struct Entry { uint64_t gen; float bias; VkSampler s; };
     static thread_local Entry table[2][4096];   // (gen 0: never filled; the generation starts at 1)
     const uint64_t gen = sampler_registrations_generation();   // (read first: a registration after it makes the next call miss)
+    const float bias = compare ? 0.0f : upscaler_lod_bias();   // (relink: the upscaler's mip bias changes the sampler too)
     Entry& e = table[compare ? 1 : 0][id];
-    if (e.gen == gen) return e.s;
+    if (e.gen == gen && e.bias == bias) return e.s;
     const VkSampler made = sampler_make(id, compare);
-    e = {gen, made};
+    e = {gen, bias, made};
     return made;
 }
 VkSampler sampler_make(int id, bool compare) {
     nvn_samp_par p{};
     if (!sampler_of(id, &p)) p.minf = NVN_MIN_FILTER_LINEAR, p.magf = NVN_MAG_FILTER_LINEAR, p.lod_max = 1000.0f;
+    // (relink) DLSS / FSR drawing: the mipmapped textures' bias lowered by upscaler_lod_bias (vk_dlss.cpp), so the upscaled
+    // picture gets the output size's texture detail. Not the depth compares (shadow maps), nor samplers without mip levels (the
+    // render targets the passes read, the HUD's flat textures): the bias changes nothing there but the key
+    const bool mipmapped = p.minf == NVN_MIN_FILTER_NEAREST_MIPMAP_NEAREST || p.minf == NVN_MIN_FILTER_NEAREST_MIPMAP_LINEAR ||
+                           p.minf == NVN_MIN_FILTER_LINEAR_MIPMAP_NEAREST || p.minf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR;
+    if (!compare && mipmapped) p.lod_bias += upscaler_lod_bias();
     uint64_t key = mix(compare ? 0xC0 : 0xAB, aniso_override());
     const uint8_t* b = reinterpret_cast<const uint8_t*>(&p);
     for (size_t i = 0; i < sizeof p; i += 8) {
@@ -7523,41 +7530,129 @@ size_t warm_run(void (*progress)(size_t done, size_t total), size_t after) {
     for (const auto& n : notes) wanted.insert(n->prog);
     const size_t programs_n = program_cache_load_some(wanted, [](Program& p) { ensure_layout(p); }, false);
     const double read_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    std::atomic<size_t> next{0}, done{0}, made{0};
+    // (relink, issue 80) A pipeline the driver never returns from held the start for good: AMD's on an RX 6600 / 6600 XT stopped
+    // at "pipelines 8517 of 13329" (3 short of the warm-up's 8520) and at "1139 of 5951", the CPU idle, for over an hour. The
+    // workers looked at the time budget only between pipelines, and the start joined them all. Now the workers' state is on the
+    // heap and this thread watches: nothing finished for RX_VK_WARM_STALL_S seconds (30; 0: wait, as before), or the budget spent,
+    // and the start goes on without the ones still inside the driver (let go, never freed). Those are named in the log and kept in
+    // <marker>.stuck, which the next starts leave out of the warm-up (they are built in play when first drawn, as any other)
+    struct Warm {
+        std::vector<std::unique_ptr<PipeNote>> notes;
+        std::atomic<size_t> next{0}, done{0}, made{0};
+        std::atomic<int> alive{0};
+        std::atomic<bool> stop{false};
+        std::unique_ptr<std::atomic<int64_t>[]> current;   // (each worker's note, -1 between them)
+        std::unique_ptr<std::atomic<int64_t>[]> since;     // (when it went into the driver for it, steady ns)
+    };
+    const std::string stuck_path = path + ".stuck";
+    std::unordered_set<uint64_t> stuck_before;
+    if (FILE* f = fopen(stuck_path.c_str(), "rb")) {
+        unsigned long long k;
+        while (fscanf(f, "%llx", &k) == 1) stuck_before.insert((uint64_t)k);
+        fclose(f);
+    }
+    auto w = std::make_shared<Warm>();
+    size_t skipped_stuck = 0;
+    for (const auto& n : notes) {   // (the notes are read again for the heap: the warm-up's own copy, kept by stuck workers)
+        if (stuck_before.count(n->key)) { skipped_stuck++; continue; }
+        w->notes.push_back(std::make_unique<PipeNote>(*n));
+    }
+    if (skipped_stuck) logf("vk: warm-up: %zu pipelines left out, the driver never returned from them before (%s)", skipped_stuck,
+                            stuck_path.c_str());
     static const int budget_s = getenv("RX_VK_WARM_S") ? atoi(getenv("RX_VK_WARM_S")) : 600;
-    std::atomic<bool> out_of_time{false};
-    const auto worker = [&] {
+    static const int stall_s = getenv("RX_VK_WARM_STALL_S") ? atoi(getenv("RX_VK_WARM_STALL_S")) : 30;
+    // (one pipeline in the driver for RX_VK_WARM_PIPE_S seconds (60; 0: no such limit) is taken as stuck at once: noted in
+    // <marker>.stuck and a new worker started in its place. On this RX 6600 XT six of eight workers were stuck so: the two left
+    // kept the progress going, slowly, so the stall rule never fired and the warm-up spent its whole budget at a quarter speed)
+    static const int pipe_s = getenv("RX_VK_WARM_PIPE_S") ? atoi(getenv("RX_VK_WARM_PIPE_S")) : 60;
+    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned nthreads = std::min(cpus, 64u), slots = nthreads * 4;   // (room for the workers that replace stuck ones)
+    w->current.reset(new std::atomic<int64_t>[slots]);
+    w->since.reset(new std::atomic<int64_t>[slots]);
+    for (unsigned k = 0; k < slots; k++) w->current[k] = -1, w->since[k] = 0;
+    const auto steady_ns = [] {
+        return (int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    const auto worker = [w, steady_ns](unsigned k) {
         ub_thread_off();   // (a background thread: see ub_thread_off)
         driver_cache_only = true;
         for (;;) {
-            if (prepare_stopped()) return;
-            if (budget_s > 0 && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(budget_s)) {
-                out_of_time = true;
-                return;
-            }
-            const size_t i = next++;
-            if (i >= notes.size()) return;
-            const PipeNote& n = *notes[i];
+            if (prepare_stopped() || w->stop.load(std::memory_order_relaxed)) break;
+            const size_t i = w->next++;
+            if (i >= w->notes.size()) break;
+            const PipeNote& n = *w->notes[i];
+            w->since[k] = steady_ns();
+            w->current[k] = (int64_t)i;
             if (const Program* p = program_find(n.prog, n.variant))
                 if (const VkPipeline pl = build_graphics(*p, n.s, note_targets(n), (VkPrimitiveTopology)n.topo))
-                    vkDestroyPipeline(dev.device, pl, nullptr), made++;
-            done++;
+                    vkDestroyPipeline(dev.device, pl, nullptr), w->made++;
+            w->current[k] = -1;
+            w->done++;
         }
+        w->alive--;
     };
     std::vector<std::thread> threads;
-    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
-    for (unsigned i = 0; i < std::min(cpus, 64u); i++) threads.emplace_back(worker);
-    while (next.load() < notes.size() + threads.size() && !prepare_stopped() && !out_of_time.load()) {
-        if (progress) progress(done.load(), notes.size() + after);
+    std::vector<bool> stuck(slots, false);
+    std::vector<uint64_t> stuck_keys;
+    std::string stuck_names;
+    const auto note_stuck = [&](unsigned k) {   // (named in the log and kept in the file at once: a crash later keeps it too)
+        const int64_t i = w->current[k].load();
+        if (i < 0 || stuck[k]) return false;
+        stuck[k] = true;
+        const PipeNote& n = *w->notes[(size_t)i];
+        stuck_keys.push_back(n.key);
+        char one[96];
+        snprintf(one, sizeof one, "%s%016llx (pipeline %016llx)", stuck_names.empty() ? "" : ", ", (unsigned long long)n.prog,
+                 (unsigned long long)n.key);
+        if (stuck_names.size() < 1500) stuck_names += one;
+        if (FILE* f = fopen(stuck_path.c_str(), "ab")) fprintf(f, "%016llx\n", (unsigned long long)n.key), fclose(f);
+        return true;
+    };
+    w->alive = (int)nthreads;
+    for (unsigned k = 0; k < nthreads; k++) threads.emplace_back(worker, k);
+    size_t last_done = 0, stuck_n = 0;
+    auto last_change = std::chrono::steady_clock::now();
+    bool out_of_time = false, stalled = false;
+    while (w->alive.load() > (int)stuck_n && !prepare_stopped()) {
+        if (progress) progress(w->done.load(), w->notes.size() + skipped_stuck + after);
         Sleep(100);
+        const auto t = std::chrono::steady_clock::now();
+        if (pipe_s > 0) {
+            const int64_t now_ns = steady_ns();
+            for (unsigned k = 0; k < (unsigned)threads.size(); k++)
+                if (!stuck[k] && w->current[k].load() >= 0 && now_ns - w->since[k].load() > pipe_s * 1000000000LL && note_stuck(k)) {
+                    stuck_n++;
+                    logf("vk: warm-up: pipeline %016llx in the driver for over %d s: left behind, a new worker in its place",
+                         (unsigned long long)stuck_keys.back(), pipe_s);
+                    if (threads.size() < slots) w->alive++, threads.emplace_back(worker, (unsigned)threads.size());
+                }
+        }
+        if (budget_s > 0 && t - t0 > std::chrono::seconds(budget_s)) { out_of_time = true; break; }
+        if (w->done.load() != last_done) last_done = w->done.load(), last_change = t;
+        else if (stall_s > 0 && t - last_change > std::chrono::seconds(stall_s)) { stalled = true; break; }
     }
-    for (std::thread& t : threads) t.join();
-    const bool whole = !prepare_stopped() && !out_of_time.load();
+    w->stop = true;
+    {   // (the workers between pipelines stop at once; give the others a moment, then let go of those still in the driver)
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (w->alive.load() > 0 && std::chrono::steady_clock::now() < until) Sleep(20);
+    }
+    const bool all_out = w->alive.load() == 0;
+    if (all_out) {
+        for (std::thread& t : threads) t.join();
+    } else {
+        for (std::thread& t : threads) t.detach();
+        for (unsigned k = 0; k < (unsigned)threads.size(); k++) note_stuck(k);   // (those the budget or the stall rule left)
+    }
+    if (!stuck_keys.empty())
+        logf("vk: warm-up: %zu pipeline%s the driver did not return from, left behind (program %s); the game starts, and the next "
+             "starts leave them out%s", stuck_keys.size(), stuck_keys.size() == 1 ? "" : "s", stuck_names.c_str(),
+             out_of_time ? " (the warm-up's time budget, RX_VK_WARM_S, ran out)" : stalled ? " (nothing finished for RX_VK_WARM_STALL_S)" : "");
+    const bool whole = !prepare_stopped() && !out_of_time && !stalled && all_out && stuck_keys.empty();
     if (whole)
         if (FILE* f = fopen(path.c_str(), "wb")) fprintf(f, "%s\n", now.c_str()), fclose(f);
-    logf("vk: warmed the driver's cache: %zu of %zu noted pipelines made in %.1f s (%.1f s of it %zu programs read)%s", made.load(),
-         notes.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), read_s, programs_n,
-         whole ? "" : " (stopped before the end: the rest are made in play, and the next start goes on)");
+    logf("vk: warmed the driver's cache: %zu of %zu noted pipelines made in %.1f s (%.1f s of it %zu programs read)%s",
+         w->made.load(), notes.size(), std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), read_s,
+         programs_n, whole ? "" : " (stopped before the end: the rest are made in play, and the next start goes on)");
     return notes.size();
 }
 
@@ -7674,6 +7769,10 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
         auto& computes = pre->computes;
         for (;;) {
             if (prepare_stopped()) return;
+            {   // (relink: the game went on without them: the others stop too, and leave the GPU and CPU to it)
+                std::lock_guard lk(pre->mu);
+                if (pre->abandoned) return;
+            }
             const size_t i = pre->next++;
             if (i >= total) return;
             if (i < computes.size()) {
@@ -7722,7 +7821,9 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
         if (next.load() >= total + threads.size()) break;
         const auto now = std::chrono::steady_clock::now();
         if (done.load() != last_done) last_done = done.load(), last_change = now;
-        else if (stall_s > 0 && next.load() >= total && now - last_change > std::chrono::seconds(stall_s)) {
+        // (relink, issue 80: whether or not every pipeline was handed out. With every worker inside the driver none was, and the
+        // start waited for good)
+        else if (stall_s > 0 && now - last_change > std::chrono::seconds(stall_s)) {
             std::lock_guard lk(pre->mu);
             pre->abandoned = true;
             gone_on = true;

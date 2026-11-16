@@ -34,6 +34,9 @@ struct Options {
     int invert_cam_x = 0; // right-stick camera horizontal inversion: 0 normal, 1 inverted
     int invert_cam_y = 0; // right-stick camera vertical inversion: 0 normal, 1 inverted
     int rumble = 100;     // the controllers' rumble in percent of the game's: 0 Off, 25 to 150 (host/pad_sdl.c)
+    int deadzone_l = 24;  // (relink) the left stick's round dead zone in percent, 0 to 50 (host/hos_stick.h); 24: XInput's
+    int deadzone_r = 24;  // (relink) the right stick's
+    int fov = 100;        // (relink) the camera's field of view in percent of the game's, 70 to 150 (host/nn_vi.c, nx2/oot_fov.py)
     int pad_layout = 0;   // 0 Nintendo (default), 1 Xbox / PC, 2 Swap Face Buttons, 3 Custom
     int gyro = 1;         // motion controls from a pad's gyroscope (host/pad_sdl.c, host/hos_motion.h); on by default
     int gyro_sens_x = 100;   // the motion aim's horizontal sensitivity in percent

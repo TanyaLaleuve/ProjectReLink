@@ -23,6 +23,15 @@ enum { HOS_OPT_GYRO = 18, HOS_OPT_GYRO_SENS_X, HOS_OPT_GYRO_INV_X, HOS_OPT_GYRO_
 /* (relink) NVIDIA DLSS's camera jitter (host/rx_backend.c, gpu/vk/vk_dlss.cpp): the scene's width and height while DLSS
    draws, 0 when there is to be no jitter, and the jitter sequence's length. 24 on: 18 to 22 are the motion rows' */
 enum { HOS_OPT_DLSS_JITTER_W = 24, HOS_OPT_DLSS_JITTER_H, HOS_OPT_DLSS_JITTER_PHASES };
+/* (relink) the Controls tab's Left / Right stick dead zone, in percent of the stick's travel (host/hos_stick.h) */
+enum { HOS_OPT_DEADZONE_L = 10, HOS_OPT_DEADZONE_R = 11 };
+/* (relink) the game frames the display has taken, modulo 2^30 (host/nn_vi.c paces HOS_FPS_CAP's frames by it) */
+enum { HOS_OPT_PRESENTS_SHOWN = 12 };
+/* (relink) the Graphics tab's Field of view, in percent of the game's camera angle (host/nn_vi.c, nx2/oot_fov.py) */
+enum { HOS_OPT_FOV = 13 };
+/* (relink) HOS_FPS_CAP's frames as the display shows them, in thousandths of a frame a second (100 Hz holding 3 refreshes:
+   33333); 0 when the display does not hold them (host/nn_vi.c paces to it) */
+enum { HOS_OPT_LOW_CAP_MFPS = 14 };
 
 /* (relink) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of relink_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position, SDL's order (the bottom face
