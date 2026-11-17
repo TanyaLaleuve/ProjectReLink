@@ -500,6 +500,7 @@ bool memory_table_flush() {
     std::stable_sort(pages.begin(), pages.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<uint64_t> run;
     VkCommandBuffer cmd = upload_command_buffer();
+    checkpoint_note(cmd, (uint64_t)pages.size(), 'T', "guest page table update, %zu pages", pages.size());
     GprofSpan gp(cmd, "ptable update (guest page table)");
     gp.items = 0;
     uint64_t run_first = 0;
@@ -3204,6 +3205,7 @@ bool memory_rb_refresh(VkCommandBuffer up) {
         by_pool[&p].push_back({a, a, b - a});
     }
     if (by_pool.empty()) return false;
+    checkpoint_note(up, (uint64_t)by_pool.size(), 'B', "readback refresh copies, guest memory -> mirrors, %zu pools", by_pool.size());
     full_barrier(up);   // (after the older submissions' write-backs into guest memory and this one's other uploads)
     GprofSpan gp(up, "rbrefresh copies (readback pages guest -> mirror)");
     gp.items = 0;
@@ -3393,7 +3395,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         const uint64_t off = guest - p->lo;
         if (p->last_value < mem_rec_value) p->last_value = mem_rec_value;
         if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED || p->mstate == Pool::MIRROR_WANTED)
-            return remember({p->buffer, off, size, 0});
+            return remember({p->buffer, off, size, 0, true});
         if (p->mstate == Pool::MIRROR_ON && p->synced_epoch == mirror_epoch && p->sync_seg <= texture_segment())
             return remember({p->mirror, off, size, 0});
     }
@@ -3406,7 +3408,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     const uint64_t off = guest - p->lo;
     if (!mirror_on() || !mirror_upload || p->mstate == Pool::MIRROR_REFUSED) {
         if (mirror_on()) { auto& e = direct_by_pool[p->lo]; e.first++, e.second = mirror_upload ? (int)p->mstate : 9; direct_bytes_by_pool[p->lo] += size; }
-        return remember({p->buffer, off, size, 0});
+        return remember({p->buffer, off, size, 0, true});
     }
     // (a pool's mirror is made at its first binding, in this part's uploads: bound in guest memory until the next
     // submission, the GPU read it there while the game's threads wrote it for their next frames, and a pass that drew
@@ -3435,7 +3437,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         if (written) p->direct_write_epoch = mirror_epoch;
         if (written && size <= (1u << 20))   // (EvilBoyce: GPU results written in place; small ones: the readbacks are)
             wb_pages_note(p->lo + off, p->lo + std::min(off + size, p->hi - p->lo), mem_rec_value);
-        return remember({p->buffer, off, size, 0});
+        return remember({p->buffer, off, size, 0, true});
     }
     if (p->synced_epoch != mirror_epoch || p->sync_seg > texture_segment()) mirror_sync(*p);
     if (written) {
