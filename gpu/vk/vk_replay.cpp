@@ -38,6 +38,7 @@
 #include "oot_cheat_items.h"   // (relink: OOT_CHEAT_ITEM_BASE, OOT_CHEAT_AGE_ID: the item wheel's counts and pages)
 #include "oot_wheel_state.h"   // (relink: the Item wheel and Cycle items rows' option ids)
 #include "oot_teleport_capture.h"   // (relink: HOS_OPT_TELEPORT_PICTURES)
+#include "hos_volume.h"   // (relink: HOS_OPT_VOLUME)
 #include "vk_jobs.h"
 #include "vk_shader.h"
 #include "vk_state.h"
@@ -4597,6 +4598,7 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_TELEPORT_PICTURES) return menu_teleport_captures_on();   // (relink: host/hos_main.c oot_capture_tick)
         if (id == HOS_OPT_LOW_CAP_MFPS) return low_cap_repeats() > 1 ? low_cap_mfps.load(std::memory_order_relaxed) : 0;
         if (id == HOS_OPT_FOV) return opts.fov;   // (relink: host/nn_vi.c, nx2/oot_fov.py)
+        if (id == HOS_OPT_VOLUME) return opts.volume;   // (relink: host/nn_audio.c)
         if (id == HOS_OPT_PRESENTS_SHOWN) return presents_shown.load(std::memory_order_acquire) & 0x3fffffff;   // (relink: host/nn_vi.c)
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !dlss_full_scale() : id == 3 ? (dlss_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :
                id == 7 ? opts.mouse_sens : id == 8 ? opts.mouse_invert : id == 9 ? opts.rumble : id == HOS_OPT_DEADZONE_L ? opts.deadzone_l : id == HOS_OPT_DEADZONE_R ? opts.deadzone_r : id == 16 ? opts.invert_cam_x : id == 17 ? opts.invert_cam_y : id == HOS_OPT_GYRO ? opts.gyro : id == HOS_OPT_GYRO_SENS_X ? opts.gyro_sens_x : id == HOS_OPT_GYRO_SENS_Y ? opts.gyro_sens_y : id == HOS_OPT_GYRO_INV_X ? opts.gyro_inv_x : id == HOS_OPT_GYRO_INV_Y ? opts.gyro_inv_y :
