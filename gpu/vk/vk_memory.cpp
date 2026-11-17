@@ -99,6 +99,7 @@ std::map<uint64_t, Pool> imported;    // by lo, made on first use
 Pool* last_pool = nullptr;            // (the last pool_of hit: draws in a row bind buffers of the same pools)
 extern Pool* pool_cache[4096];
 void retire_pool(std::map<uint64_t, Pool>::iterator it);
+size_t retired_pools_count();   // (import diagnostics, RX_VK_IMPORT_DIAG)
 Pool* pool_lookup(uint64_t guest, uint64_t size);
 struct SrwMutex {   // (a slim reader/writer lock: half std::mutex's cost, taken for every buffer a draw binds)
     SRWLOCK l = SRWLOCK_INIT;
@@ -424,6 +425,32 @@ bool import_pool(uint64_t lo, uint64_t hi, Pool& p) {
     ai.allocationSize = bytes;
     ai.memoryTypeIndex = type;
     const VkResult allocated = vkAllocateMemory(dev.device, &ai, nullptr, &p.memory);
+    if (allocated != VK_SUCCESS && getenv("RX_VK_IMPORT_DIAG")) {
+        // (diagnostics, RX_VK_IMPORT_DIAG=1: every refused import, with what overlaps it and the pages' Windows state)
+        size_t live_over = 0;
+        uint64_t live_bytes = 0;
+        for (const auto& [k, q] : imported) {
+            live_bytes += q.hi - q.lo;
+            if (q.lo < hi && q.hi > lo) live_over++;
+        }
+        char regions[400];
+        int rn = 0, nreg = 0;
+        regions[0] = 0;
+        for (uint8_t* q = ptr; q < ptr + bytes && nreg < 64;) {
+            MEMORY_BASIC_INFORMATION mi{};
+            if (VirtualQuery(q, &mi, sizeof mi) != sizeof mi) break;
+            uint8_t* end = std::min((uint8_t*)mi.BaseAddress + mi.RegionSize, ptr + bytes);
+            if (nreg < 6 && rn < (int)sizeof regions - 80)
+                rn += snprintf(regions + rn, sizeof regions - rn, " [%llu KB state %#lx prot %#lx type %#lx]",
+                               (unsigned long long)((end - q) >> 10), mi.State, mi.Protect, mi.Type);
+            nreg++;
+            q = end;
+        }
+        logf("vk: import diag: %#llx..%#llx (%llu KB, ptr %% 64K = %#llx) refused (%d); %zu live imports overlap it, %zu live "
+             "(%llu MB), %zu retired; %d regions:%s", (unsigned long long)lo, (unsigned long long)hi,
+             (unsigned long long)(bytes >> 10), (unsigned long long)((uintptr_t)ptr & 0xFFFF), (int)allocated, live_over,
+             imported.size(), (unsigned long long)(live_bytes >> 20), retired_pools_count(), nreg, regions);
+    }
     if (allocated != VK_SUCCESS) {
         import_result = allocated;
         vkDestroyBuffer(dev.device, p.buffer, nullptr);
@@ -2910,6 +2937,7 @@ void cut_cpu_words(const Pool& p, std::vector<VkBufferCopy>& runs) {
 // (Extracted from the table, not erased: the node, and the Pool in it, stay where they were, so the mirror's lists and
 // a parallel replay thread's pool cache still point at a live one.)
 std::deque<std::map<uint64_t, Pool>::node_type> retired_pools;
+size_t retired_pools_count() { return retired_pools.size(); }
 
 void retire_pool(std::map<uint64_t, Pool>::iterator it) {
     Pool* old = &it->second;
@@ -3501,7 +3529,15 @@ void retired_imports_give_back() {   // (pools_mu held)
 #ifdef _WIN32
     // (not on NVIDIA: kept there, ~20 areas of play left 6.8 GB of retired pools imported on an RTX 3070 (8 GB), and the next area
     // lost the device, twice; given back, the same tour finished every area (issue 1057). The losses above were Intel's and AMD's)
-    static const bool keep = getenv("RX_VK_KEEP_RETIRED") ? getenv("RX_VK_KEEP_RETIRED")[0] != '0' : dev.props.vendorID != 0x10DE;
+    // (relink, 11-17: on AMD too. Kept, the retired pools of a few area changes stayed pinned beside the live ones, 3.1 GB of
+    // retired and 3.8 GB live on an RX 6600 XT (16 GB) after Kokiri, Kakariko and the Market, 7.3 GB on an RX 9070 XT; past
+    // that the driver refused every new import (VK_ERROR_INVALID_EXTERNAL_HANDLE, even a plain 16 MB chunk overlapping
+    // nothing), the terrain's index buffers could not be bound and ~1,100 draws a frame were left out: Hyrule Field's ground
+    // gone, its plants floating on the water, until a restart (Discord "Some Problems", "Invisible Textures"). Given back, the
+    // same trip from the Market to the field: no import refused, the ground whole, 157 retired imports (3.7 GB) back, no
+    // device lost. Intel keeps them, as before)
+    static const bool keep = getenv("RX_VK_KEEP_RETIRED") ? getenv("RX_VK_KEEP_RETIRED")[0] != '0'
+                                                          : dev.props.vendorID != 0x10DE && dev.props.vendorID != 0x1002;
 #else
     static const bool keep = getenv("RX_VK_KEEP_RETIRED") && getenv("RX_VK_KEEP_RETIRED")[0] != '0';
 #endif
@@ -3704,9 +3740,11 @@ void imports_give_back() {   // (pools_mu held)
     // 16 imports failed (VK_ERROR_OUT_OF_DEVICE_MEMORY) and the tenth lost the device (hs483; hs451 at the twelfth). With idle
     // imports given back the same tour ran its 27 areas, the heap under 4.5 GB, no import refused (hs491, 55 / 45). 70 / 60
     // here: fewer imports made again (2083 in that tour) and still 2 GB under the budget)
-    static const bool nvidia = dev.props.vendorID == 0x10DE;
-    static const int high = env_high ? atoi(env_high) : nvidia ? 70 : 0;
-    static const int low = getenv("RX_VK_IMPORT_LOW") ? std::clamp(atoi(getenv("RX_VK_IMPORT_LOW")), 10, 95) : nvidia ? 60 : 75;
+    // (relink, 11-17: and on AMD, with the retired imports given back above: the pinned imports of a session had no bound
+    // there, and past ~7 GB the driver refused new ones, the terrain left out)
+    static const bool nv_or_amd = dev.props.vendorID == 0x10DE || dev.props.vendorID == 0x1002;
+    static const int high = env_high ? atoi(env_high) : nv_or_amd ? 70 : 0;
+    static const int low = getenv("RX_VK_IMPORT_LOW") ? std::clamp(atoi(getenv("RX_VK_IMPORT_LOW")), 10, 95) : nv_or_amd ? 60 : 75;
 #else
     static const int high = env_high ? atoi(env_high) : 85;
     static const int low = getenv("RX_VK_IMPORT_LOW") ? std::clamp(atoi(getenv("RX_VK_IMPORT_LOW")), 10, 95) : 75;
