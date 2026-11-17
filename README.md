@@ -96,7 +96,8 @@ the game. We have none of them here, so that part is not tested by us.
 
 The mouse turns the camera after a click in the game's window (Escape frees it). The Insert menu's **Mouse camera** row
 chooses how: as the right stick, or "Native", one to one as in a PC game. If the game has no sound, the same menu's
-**Audio output** row (Gameplay) can be set to Stereo; it applies after a restart.
+**Audio output** row (Gameplay) can be set to Stereo; it applies after a restart. The **Volume** row just above it sets the
+game's whole sound, music, effects and voices, from 0% (muted) to 100%, heard at once and kept in relink_options.ini.
 
 **Item wheel** (Gameplay, off by default): holding R or L shows the item row as a wheel, Twilight Princess style. Point at an
 item with either stick (or the mouse) and let go: it is on ZR at once. The items are on pages of 8 slots, one set for child
