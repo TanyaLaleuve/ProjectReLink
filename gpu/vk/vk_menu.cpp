@@ -2026,7 +2026,11 @@ Upload ups[4][3];   // (the menu's, the counter's, the start-up screen's, (relin
 
 void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, int y, uint32_t w, uint32_t h) {
     std::lock_guard lk(bmp_mu);
-    if (!b.w || (uint32_t)x + b.w > w || (uint32_t)y + b.h > h) return;
+    // (relink, issue 96) the part inside the window: a bitmap that went past its edge was not drawn at all, and in a 1280x720
+    // window the Insert menu (726 lines at a scale of 1 since 0.7.9's rows) never showed
+    const int cx0 = std::max(0, -x), cy0 = std::max(0, -y);
+    const int cx1 = std::min((int)b.w, (int)w - x), cy1 = std::min((int)b.h, (int)h - y);
+    if (!b.w || cx0 >= cx1 || cy0 >= cy1) return;
     const uint64_t size = (uint64_t)b.w * b.h * 4;
     if (u.size < size) {
         // (the slot's own frame is over before the slot is used again: its smaller buffer can go. It stayed for good before, which
@@ -2039,15 +2043,26 @@ void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, in
     if (u.version != b.version) std::memcpy(u.map, b.px.data(), size), u.version = b.version;
     if (b.keyed) {
         static thread_local std::vector<VkBufferImageCopy> at;
-        at = b.runs;
-        for (auto& r : at) r.imageOffset.x += x, r.imageOffset.y += y;
+        at.clear();
+        for (const auto& r : b.runs) {   // (each run one line of the bitmap: the lines and the parts of lines outside left out)
+            const int ry = r.imageOffset.y, rx0 = std::max(r.imageOffset.x, cx0);
+            const int rx1 = std::min(r.imageOffset.x + (int)r.imageExtent.width, cx1);
+            if (ry < cy0 || ry >= cy1 || rx0 >= rx1) continue;
+            VkBufferImageCopy c = r;
+            c.bufferOffset += (uint64_t)(rx0 - r.imageOffset.x) * 4;
+            c.imageOffset.x = rx0 + x, c.imageOffset.y = ry + y;
+            c.imageExtent.width = (uint32_t)(rx1 - rx0);
+            at.push_back(c);
+        }
         if (!at.empty()) vkCmdCopyBufferToImage(cmd, u.buf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)at.size(), at.data());
         return;
     }
     VkBufferImageCopy c{};
+    c.bufferOffset = ((uint64_t)cy0 * b.w + cx0) * 4;
+    c.bufferRowLength = b.w;
     c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    c.imageOffset = {x, y, 0};
-    c.imageExtent = {b.w, b.h, 1};
+    c.imageOffset = {x + cx0, y + cy0, 0};
+    c.imageExtent = {(uint32_t)(cx1 - cx0), (uint32_t)(cy1 - cy0), 1};
     vkCmdCopyBufferToImage(cmd, u.buf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
 }
 
@@ -2932,7 +2947,9 @@ void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_
         VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
         vkCmdPipelineBarrier2(cmd, &di);
-        if (mw) copy_over(cmd, dst, menu_bmp, ups[0][slot], (int)(w - mw) / 2, (int)(h - mh) / 2, w, h);
+        int x0 = 0, y0 = 0;   // (the place the mouse's hits are read against: menu_tick)
+        menu_hit::origin((int)w, (int)h, (int)mw, (int)mh, &x0, &y0);
+        if (mw) copy_over(cmd, dst, menu_bmp, ups[0][slot], x0, y0, w, h);
     }
 }
 
