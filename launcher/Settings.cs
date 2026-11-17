@@ -46,6 +46,7 @@ sealed class Settings
 {
     // the game's rows (gpu/vk/vk_menu.cpp: ini keys are the row names, lower case, spaces as underscores)
     public int Fullscreen = 1, FrameGeneration = 0, FramePacing = 0, FrameRate = 0, Resolution = 1, Upscaling = 0, Sharpness = 0,
+               VSync = 0,   // (the game's V-Sync row, saved as v-sync: 0 off, 1 on, FIFO)
                GameSpeed = 0, Handheld = 0, Ultrawide = 0, FpsCounter = 0,
                Upscaler = 0;   // (the game's Upscaler row, saved as dlss: 0 the game's own, 1 NVIDIA DLSS, 2 NVIDIA DLAA, 3 AMD FSR, 4 AMD FSR native AA)
     // the launcher's
@@ -125,6 +126,7 @@ sealed class Settings
         FrameGeneration = Int(g, "frame_generation", 0, 0, 4);
         if (FrameGeneration == 1) FrameGeneration = 2;
         FramePacing = Int(g, "frame_pacing", 0, 0, 1);
+        VSync = Int(g, "v-sync", 0, 0, 1);
         FrameRate = Int(g, "frame_rate", 0, 0, 2);   // (2: 30, smooth: HOS_FPS_CAP=30)
         // (the game's Render resolution row: 0 Auto, 1..6 = 100 %, 75 %, 67 %, 50 %, 58 %, 33 % of the output; 1, native, by default)
         Resolution = Int(g, "resolution", 1, 0, 6);
@@ -154,7 +156,7 @@ sealed class Settings
 
     static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
-        "fullscreen", "frame_generation", "frame_pacing", "frame_rate", "resolution", "upscaling", "sharpness", "game_speed",
+        "fullscreen", "frame_generation", "frame_pacing", "v-sync", "frame_rate", "resolution", "upscaling", "sharpness", "game_speed",
         "handheld_profile", "ultrawide", "fps_counter", "dlss",
     };
 
@@ -177,6 +179,7 @@ sealed class Settings
         Row("fullscreen", Fullscreen);
         Row("frame_generation", FrameGeneration);
         Row("frame_pacing", FramePacing);
+        Row("v-sync", VSync);
         Row("frame_rate", FrameRate);
         Row("resolution", Resolution);
         Row("upscaling", Upscaling);

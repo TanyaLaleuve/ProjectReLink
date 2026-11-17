@@ -40,6 +40,7 @@ import kit
 import lifted_c
 import rtgen
 import logo_rgba
+import fonts_embed
 import toolchain
 import version
 import win_manifest
@@ -672,6 +673,8 @@ def main():
     # its bytes are part of vk_menu.cpp's dependencies
     gen_dir = os.path.join(out, "gen")
     logo_text = logo_rgba.write(os.path.join(gen_dir, "relink_logo.h")).encode()
+    # (and the game's typeface, assets/fonts as bytes in a header of its own: nx2/fonts_embed.py; also vk_menu.cpp's)
+    logo_text += fonts_embed.write(os.path.join(gen_dir, "relink_fonts.h")).encode()
     os.makedirs(obj_dir, exist_ok=True)
     if os.environ.get("RX_VK_ONLY"):   # (the Vulkan back end needs no game: built so with no lift, as the AppImage's is)
         os.makedirs(gen, exist_ok=True)

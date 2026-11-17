@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using static ReLink.Texts;
@@ -18,7 +20,7 @@ public partial class MainWindow
     int origHz;
     bool display60Possible;
 
-    CheckBox Fullscreen = null!, Display60 = null!, FpsCounter = null!, Ultrawide = null!, FramePacing = null!, Audio = null!, Handheld = null!, InvertY = null!,
+    CheckBox Fullscreen = null!, Display60 = null!, FpsCounter = null!, Ultrawide = null!, FramePacing = null!, VSync = null!, Audio = null!, Handheld = null!, InvertY = null!,
              NvidiaDlss = null!;
     WrapPanel ResolutionGroup = null!, UpscalerGroup = null!, UpscaleGroup = null!, FrameRateGroup = null!, SpeedGroup = null!, FramegenGroup = null!, UiLanguageGroup = null!;
     Slider Sharpness = null!;
@@ -109,6 +111,10 @@ public partial class MainWindow
                   "Framegen", (0, L("Aucune", "None")), (2, "×2"), (3, "×3"), (4, "×4"));
         SwitchRow(RowsSmooth, L("Rythme régulier des images générées", "Even pacing of generated frames"),
                   L("Avec la génération d'images seulement.", "With frame generation only."), out FramePacing, out _);
+        SwitchRow(RowsSmooth, "V-Sync",
+                  L("Chaque image attend le rafraîchissement de l'écran : plus de déchirure de l'image, un peu plus de délai. Utile là où le pilote n'a pas de mode mailbox (AMD sous Windows). Le menu en jeu le change aussi, aussitôt.",
+                    "Each frame waits for the display's refresh: no more tearing, a little more delay. Useful where the driver has no mailbox mode (AMD on Windows). The in-game menu changes it too, at once."),
+                  out VSync, out _);
 
         // ---- game
         LanguageBox = new ComboBox { Style = St("List"), Width = 230, ItemsSource = GameLanguages.Select(l => new LangItem(l.Code, l.Name)).ToList() };
@@ -172,6 +178,127 @@ public partial class MainWindow
         });
 
         Wire();
+        foreach (var page in new Panel[] { RowsDisplay, RowsSmooth, RowsGame, RowsControls }) WireRows(page);
+    }
+
+    // ---------------------------------------------------------------- the rows as the in-game menu has them
+    // (one row selected a page: tinted in the page's colour, with what it does under it; the others one line each. A click or
+    // the keyboard's focus selects one; the arrows move and change, Q and E change pages: OptionsKey)
+    readonly Dictionary<Panel, Border> selectedRows = new();
+
+    /// The controls in a row, laid out or not (its logical children)
+    static IEnumerable<T> Within<T>(DependencyObject root) where T : DependencyObject
+    {
+        foreach (var c in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            if (c is T t) yield return t;
+            foreach (var deeper in Within<T>(c)) yield return deeper;
+        }
+    }
+    static IEnumerable<TextBlock> Styled(DependencyObject root, string style) => Within<TextBlock>(root).Where(t => t.Style == St(style));
+
+    void WireRows(Panel page)
+    {
+        var rows = page.Children.OfType<Border>().ToList();
+        foreach (var b in rows)
+        {
+            b.PreviewMouseLeftButtonDown += (_, _) => SelectRow(b);
+            b.IsKeyboardFocusWithinChanged += (_, e) => { if ((bool)e.NewValue) SelectRow(b); };
+            Look(b, false);
+        }
+        if (rows.Count > 0) SelectRow(rows[0]);
+    }
+
+    /// A row selected or not: the same height either way (the edge all round with its padding, or the rule under it with a
+    /// little more padding), so nothing moves when the selection does. Its hints stay hidden: OptionsHelp says them
+    void Look(Border b, bool on)
+    {
+        b.Background = on ? (Brush)b.FindResource("AccentTint") : Brushes.Transparent;
+        b.BorderBrush = on ? (Brush)b.FindResource("AccentEdge") : Res("Rule");
+        b.BorderThickness = on ? new Thickness(1.5) : new Thickness(0, 0, 0, 1);
+        b.Padding = on ? new Thickness(12, 8, 12, 8) : new Thickness(13.5, 9.5, 13.5, 9);
+        b.CornerRadius = new CornerRadius(on ? 10 : 0);
+        b.Margin = new Thickness(0);
+        foreach (var h in Styled(b, "RowHint")) h.Visibility = Visibility.Collapsed;
+        foreach (var l in Styled(b, "RowLabel")) l.FontWeight = on ? FontWeights.Bold : FontWeights.Normal;
+    }
+
+    void SelectRow(Border b)
+    {
+        if (b.Parent is not Panel page) return;
+        if (selectedRows.TryGetValue(page, out var was) && was == b) return;
+        if (was != null) Look(was, false);
+        selectedRows[page] = b;
+        Look(b, true);
+        b.BringIntoView();
+        ShowRowHelp();
+    }
+
+    /// What the open page's selected row does, in the box under the rows, a bar of the page's colour at its left
+    void ShowRowHelp()
+    {
+        if (OptionsHelpText == null || !selectedRows.TryGetValue(OpenPage(), out var row)) return;
+        OptionsHelpText.Text = string.Join("\n", Styled(row, "RowHint").Select(t => t.Text).Where(t => t.Length > 0));
+        OptionsHelp.BorderBrush = (Brush)row.FindResource("Accent");
+        OptionsHelp.Visibility = OptionsHelpText.Text.Length > 0 ? Visibility.Visible : Visibility.Hidden;
+    }
+
+    Panel OpenPage() => PageDisplay.Visibility == Visibility.Visible ? RowsDisplay : PageSmooth.Visibility == Visibility.Visible ? RowsSmooth
+                      : PageGame.Visibility == Visibility.Visible ? RowsGame : RowsControls;
+
+    /// The keyboard's focus on the open page's selected row, its first control (the arrows then work at once)
+    void FocusSelectedRow()
+    {
+        if (!selectedRows.TryGetValue(OpenPage(), out var row)) return;
+        Within<Control>(row).FirstOrDefault(c => c.Focusable && c.IsEnabled && c.IsVisible)?.Focus();
+    }
+
+    void OptionsKey(object sender, KeyEventArgs e)
+    {
+        if (e.OriginalSource is ComboBox { IsDropDownOpen: true } || Keyboard.FocusedElement is ComboBoxItem) return;
+        var tabs = new[] { TabDisplay, TabSmooth, TabGame, TabControls };
+        if (e.Key is Key.Q or Key.E)
+        {
+            var at = Array.FindIndex(tabs, t => t.IsChecked == true);
+            tabs[(at + (e.Key == Key.E ? 1 : tabs.Length - 1)) % tabs.Length].IsChecked = true;
+            e.Handled = true;
+            return;
+        }
+        var page = OpenPage();
+        if (!selectedRows.TryGetValue(page, out var row)) return;
+        if (e.Key is Key.Up or Key.Down)
+        {
+            var rows = page.Children.OfType<Border>().Where(b => b.IsVisible).ToList();
+            var i = rows.IndexOf(row);
+            if (i < 0) return;
+            SelectRow(rows[(i + (e.Key == Key.Down ? 1 : rows.Count - 1)) % rows.Count]);
+            FocusSelectedRow();
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Left or Key.Right)
+        {
+            var dir = e.Key == Key.Right ? 1 : -1;
+            if (Within<CheckBox>(row).FirstOrDefault(c => c.IsEnabled) is { } box) box.IsChecked = dir > 0;
+            else if (Within<Slider>(row).FirstOrDefault() is { } slider) slider.Value = Math.Clamp(slider.Value + dir * slider.SmallChange, slider.Minimum, slider.Maximum);
+            else if (Within<ComboBox>(row).FirstOrDefault() is { } list) list.SelectedIndex = Math.Clamp(list.SelectedIndex + dir, 0, list.Items.Count - 1);
+            else
+            {
+                var choices = Within<RadioButton>(row).Where(r => r.IsEnabled && r.Visibility == Visibility.Visible).ToList();
+                var at = choices.FindIndex(r => r.IsChecked == true);
+                if (choices.Count > 0) choices[Math.Clamp(at + dir, 0, choices.Count - 1)].IsChecked = true;
+            }
+            e.Handled = true;
+        }
+    }
+
+    // ---------------------------------------------------------------- Home's cards: what Play will show, in a line each
+    void UpdateHero()
+    {
+        var res = s.Resolution switch { 1 => L("Native", "Native"), 0 => L("Automatique", "Automatic"), 2 => "75 %", 3 => "67 %", 5 => "58 %", 4 => "50 %", _ => "" };
+        var up = s.Upscaler switch { 3 => "AMD FSR", 4 => L("AMD FSR, AA natif", "AMD FSR native AA"), 1 => "NVIDIA DLSS", 2 => "NVIDIA DLAA", _ => L("Celui du jeu", "The game's own") };
+        LooksText.Text = $"{(s.Fullscreen != 0 ? L("Plein écran", "Full screen") : L("Fenêtre", "Window"))} · {res} · {up}";
+        var rate = s.FrameRate switch { 1 => L("Débloqué", "Unlocked"), 2 => L("30, fluide", "30, smooth"), _ => L("60, comme la console", "60, as on the console") };
+        MovesText.Text = s.FrameGeneration >= 2 ? $"{rate} · ×{s.FrameGeneration}" : rate;
     }
 
     void Keys(string title, (string Key, string What)[] list)
@@ -212,6 +339,7 @@ public partial class MainWindow
         OnSwitch(FpsCounter, v => s.FpsCounter = v ? 1 : 0);
         OnSwitch(Ultrawide, v => s.Ultrawide = v ? 1 : 0);
         OnSwitch(FramePacing, v => s.FramePacing = v ? 1 : 0);
+        OnSwitch(VSync, v => s.VSync = v ? 1 : 0);
         OnSwitch(Audio, v => s.Audio = v);
         OnSwitch(Handheld, v => s.Handheld = v ? 1 : 0);
         OnSwitch(InvertY, v => s.InvertY = v);
@@ -249,6 +377,7 @@ public partial class MainWindow
         FpsCounter.IsChecked = s.FpsCounter != 0;
         Ultrawide.IsChecked = s.Ultrawide != 0;
         FramePacing.IsChecked = s.FramePacing != 0;
+        VSync.IsChecked = s.VSync != 0;
         Audio.IsChecked = s.Audio;
         Handheld.IsChecked = s.Handheld != 0;
         InvertY.IsChecked = s.InvertY;
@@ -280,6 +409,8 @@ public partial class MainWindow
         // (frame generation fills the display's own refresh: no switch to 60 Hz then)
         Display60.IsEnabled = display60Possible && s.FrameGeneration < 2;
         if (view is View.Home or View.Ready) MainNote.Text = PlaySummary();
+        UpdateHero();
+        ShowRowHelp();
         ShowChecks();
     }
 

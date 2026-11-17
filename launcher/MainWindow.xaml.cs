@@ -41,14 +41,15 @@ public partial class MainWindow : Window
             ShowActivated = false;
         }
         staff = new Staff(StaffCanvas);
-        Scene.Draw(Sky, 1120, 700, Scene.Hour());
-        skyTimer.Tick += (_, _) => Scene.Draw(Sky, 1120, 700, Scene.Hour());
+        Scene.Draw(Sky, Sky.Width, Sky.Height, Scene.Hour());
+        skyTimer.Tick += (_, _) => Scene.Draw(Sky, Sky.Width, Sky.Height, Scene.Hour());
         skyTimer.Start();
         clock.Tick += (_, _) => Tick();
         padTimer.Tick += (_, _) => UpdatePads();
         ApplyTexts();
         BuildHomeRows();
         BuildReadyRows();
+        HomeView.PreviewKeyDown += OptionsKey;   // (the options as the in-game menu: the arrows, Q and E)
         // (the window has no title bar: it moves by any place that is not a control)
         MouseLeftButtonDown += (_, e) =>
         {
@@ -72,6 +73,12 @@ public partial class MainWindow : Window
     void ApplyTexts()
     {
         Subtitle.Text = L("Ocarina of Time, recompilé pour votre PC", "Ocarina of Time, recompiled for your PC");
+        HeroSub.Text = L("recompilé pour votre PC", "recompiled for your PC");
+        NavHome.Content = L("Accueil", "Home");
+        NavOptions.Content = L("Options", "Options");
+        LooksHead.Text = L("L'image", "How it looks");
+        MovesHead.Text = L("La fluidité", "How it moves");
+        LooksMore.Text = MovesMore.Text = L("Changer ›", "Change ›");
         HelpLink.Content = L("Aide", "Help");
         FolderLink.Content = L("Dossier du jeu", "Game folder");
         DiscordLink.Content = "Discord";
@@ -100,7 +107,7 @@ public partial class MainWindow : Window
         TabSmooth.Content = L("Fluidité", "Smoothness");
         TabGame.Content = L("Jeu", "Game");
         TabControls.Content = L("Contrôles", "Controls");
-        HomeFoot.Text = L("Le menu en jeu (Inser ou F1) change aussi ces réglages.", "The in-game menu (Insert or F1) changes these settings too.");
+        HomeFoot.Text = HeroFoot.Text = L("Le menu en jeu (Inser ou F1) change aussi ces réglages.", "The in-game menu (Insert or F1) changes these settings too.");
 
         PlayingTitle.Text = L("Bonne partie", "Enjoy the game");
         RestoreNow.Content = L("Remettre la fréquence de l'écran maintenant", "Put the display's refresh rate back now");
@@ -168,16 +175,16 @@ public partial class MainWindow : Window
         view = v;
         var pages = new (View Is, FrameworkElement Page)[]
         {
-            (View.Install, InstallView), (View.Build, BuildView), (View.Ready, ReadyView), (View.Problem, ProblemView), (View.Home, HomeView),
+            (View.Install, InstallView), (View.Build, BuildView), (View.Ready, ReadyView), (View.Problem, ProblemView),
         };
         foreach (var (k, page) in pages)
         {
             page.Visibility = k == v ? Visibility.Visible : Visibility.Collapsed;
-            if (k != v || snapshot) continue;
-            page.Opacity = 0;
-            page.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)));
+            if (k == v) Appear(page);
         }
-        // the left column says the same thing as the page: a button when there is something to press, the percentage while it works
+        ShowHomePage();
+        // (the side says the same thing as the page: Home and Options, and Play, once there is a game; the percentage is the build's)
+        NavPanel.Visibility = v == View.Home ? Visibility.Visible : Visibility.Collapsed;
         ProgressBlock.Visibility = v == View.Build ? Visibility.Visible : Visibility.Collapsed;
         MainButton.Visibility = v is View.Install or View.Ready or View.Home ? Visibility.Visible : Visibility.Collapsed;
         MainNote.Visibility = MainButton.Visibility;
@@ -186,6 +193,38 @@ public partial class MainWindow : Window
         FolderLink.Visibility = v is View.Ready or View.Home ? Visibility.Visible : Visibility.Collapsed;
         if (v is View.Ready or View.Home) MainButtonText.Text = L("Jouer", "Play");
     }
+
+    void Appear(FrameworkElement page)
+    {
+        if (snapshot) return;
+        page.Opacity = 0;
+        page.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)));
+    }
+
+    /// Home's two pages, as the side's choice says: the sky and what Play will do, or the options
+    void ShowHomePage()
+    {
+        var home = view == View.Home;
+        var hero = home && NavHome.IsChecked == true;
+        var options = home && NavOptions.IsChecked == true;
+        if (hero && HeroView.Visibility != Visibility.Visible) Appear(HeroView);
+        if (options && HomeView.Visibility != Visibility.Visible) Appear(HomeView);
+        HeroView.Visibility = hero ? Visibility.Visible : Visibility.Collapsed;
+        HomeView.Visibility = options ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void NavChanged(object sender, RoutedEventArgs e)
+    {
+        if (HeroView == null) return;   // (the first one is checked while the window is still being made)
+        ShowHomePage();
+        if (NavOptions.IsChecked == true) Dispatcher.BeginInvoke(FocusSelectedRow, DispatcherPriority.Input);
+    }
+
+    /// The cards of Home: each opens the options at its page
+    /// (on the press, and kept from the window: a press anywhere else that is not a control moves the window, DragMove, which
+    /// takes the mouse and the release with it)
+    void LooksClick(object sender, MouseButtonEventArgs e) { e.Handled = true; TabDisplay.IsChecked = true; NavOptions.IsChecked = true; }
+    void MovesClick(object sender, MouseButtonEventArgs e) { e.Handled = true; TabSmooth.IsChecked = true; NavOptions.IsChecked = true; }
 
     void MainClick(object sender, RoutedEventArgs e)
     {
@@ -198,6 +237,8 @@ public partial class MainWindow : Window
         if (PageDisplay == null) return;   // (the first tab is checked while the window is still being made)
         foreach (var (tab, page) in new[] { (TabDisplay, PageDisplay), (TabSmooth, PageSmooth), (TabGame, PageGame), (TabControls, PageControls) })
             page.Visibility = tab.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        ShowRowHelp();
+        if (HomeView.IsVisible) Dispatcher.BeginInvoke(FocusSelectedRow, DispatcherPriority.Input);
     }
 
     // ================= links =================
@@ -229,7 +270,7 @@ public partial class MainWindow : Window
     }
 
     // ================= pictures of the window, for checking it (nothing is run) =================
-    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|smooth|game|controls|playing
+    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|options|smooth|game|controls|playing
 
     void Preview(string what)
     {
@@ -291,6 +332,7 @@ public partial class MainWindow : Window
                     UpdateLink.Visibility = Visibility.Visible;
                 }
                 if (what == "home-mods") ShowMods(preview: 2);
+                if (what is "options" or "smooth" or "game" or "controls") NavOptions.IsChecked = true;
                 if (what == "smooth") TabSmooth.IsChecked = true;
                 else if (what == "game") TabGame.IsChecked = true;
                 else if (what == "controls") TabControls.IsChecked = true;

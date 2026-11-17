@@ -130,7 +130,7 @@ and makes the swapchain's images drawable, which ReShade's effects and RenoDX's 
 `0` turns it off). A RenoDX mod for this game still has to be written for its shaders: ReLink only removes what stopped
 ReShade from drawing.
 
-**Travel** (on the Cheats page: `HOS_OOT_CHEATS=1` in `relink_env.txt` shows the Gameplay tab's **Cheats** row, and
+**Travel** (on the Cheats page: the Gameplay tab's **Cheats** row, shown unless `HOS_OOT_CHEATS=0` in `relink_env.txt` hides it, and
 Travel is that page's last row): a page of 190 places to go to, villages, dungeons' entrances, shops, warp points and story spots,
 grouped by area, for Link's age (Tab or X shows the other age's: going there makes Link that age). Once you have opened the
 page, each place gets a picture taken from your own game the first time Link stays there a few seconds with the menu closed

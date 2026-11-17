@@ -130,7 +130,6 @@ public partial class MainWindow
             if (c is { Ok: false })
                 texts.Children.Add(new TextBlock { Text = Why(c.Value.Text), FontSize = 12.5, Foreground = Res("Warn"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) });
             var chip = new TextBlock { Text = state, FontSize = 13, Foreground = Res(brush), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(14, 2, 0, 0) };
-            if (c is { Ok: true }) chip.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8F, 0xD0, 0x9A));
             var grid = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = GridLength.Auto } } };
             Grid.SetColumn(chip, 1);
             grid.Children.Add(texts);

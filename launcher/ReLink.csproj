@@ -27,6 +27,8 @@
 
   <ItemGroup>
     <Resource Include="app.ico" />
+    <!-- (the game's own typeface, Rubik: assets/fonts, SIL Open Font License 1.1; the in-game menu has the same) -->
+    <Resource Include="..\assets\fonts\Rubik-*.ttf" Link="fonts\%(Filename)%(Extension)" />
     <Compile Remove="setup\**" />
     <None Remove="setup\**" />
   </ItemGroup>

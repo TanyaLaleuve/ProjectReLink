@@ -21,6 +21,8 @@ enum { HOS_OPT_LOW_CAP_MFPS = 14 };
 struct Options {
     int framegen = 0;     // made frames: 0 off, or 2, 3, 4 times the game's frames
     int pace = 0;         // frames shown on an even line (vk_framegen.cpp)
+    int vsync = 0;        // (relink) V-Sync: 0 off (mailbox where the driver has it, else immediate, which can tear), 1 on
+                          // (FIFO: every frame waits for the display's refresh; vk_main.cpp make_swapchain)
     // (relink: 1 by default, the 3D at the picture's size. Auto ran at 1536 x 864 and below for a 2048 x 1152 picture)
     int resolution = 1;   // the 3D's (Render resolution): 0 Auto (the game's dynamic resolution), else a share of the output,
                           // 1..6 = 100%, 75%, 67%, 50%, 58%, 33% (upscaler_rows.h; nx2/oot_patches.py)
