@@ -51,6 +51,7 @@
 #include "astc_bc_policy.h"
 #include "keep_rendered.h"
 #include "prompt_tex.h"
+#include "ocarina_tex.h"
 #include "target_overlap.h"
 #include "host_shaders/block_linear_unswizzle_2d_comp_spv.h"
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
@@ -1357,7 +1358,10 @@ bool upload(Texture& tex, const Ranges* dirty) {
                  (unsigned long long)tex.first_seen);
         }
     }
-    if (tex.astc && upload_astc_gpu(tex, total, dirty)) return true;
+    // (relink) the ocarina's note buttons: the CPU's ASTC decode, where their blocks are at hand to be replaced
+    // (ocarina_tex.h), while the prompts' family is not the game's own
+    const bool ocarina = ocarina_tex_shape(tex) && ocarina_tex_state() != 0;
+    if (tex.astc && !ocarina && upload_astc_gpu(tex, total, dirty)) return true;
     if (tex.bc) return false;   // (no CPU path into BC3)
     // (the GPU's unswizzle reads guest memory as it is: not where the capture kept the storage as it was at its submit)
     if (!(tex.gpu < (1ull << 40) && memory_has_shadow(tex.gpu, total)) && upload_unswizzle_gpu(tex, total, dirty)) return true;
@@ -1507,6 +1511,8 @@ bool upload(Texture& tex, const Ranges* dirty) {
                 }
                 if (keytex && y0 == 0 && th == g.th && block_bytes == prompt_tex::kBlocks)
                     tex.keytex_wait = prompt_tex_apply(blocks) < 0;
+                if (ocarina && y0 == 0 && th == g.th && block_bytes == ocarina_tex::kBlocks)
+                    tex.keytex_wait = ocarina_tex_apply(blocks) < 0;
                 if (tex.astc) {
                     Tegra::Texture::ASTC::DecompressSerial(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
                                                            (u32)tex.block_w, (u32)tex.block_h,
@@ -2418,6 +2424,12 @@ bool prompt_tex_shape(const Texture& t) {
            !t.bc && t.bpb == 8 && t.block_w == 4 && t.block_h == 4;
 }
 
+bool ocarina_tex_shape(const Texture& t) {
+    return t.astc && t.type == VK_IMAGE_TYPE_2D && t.width == ocarina_tex::kSize && t.height == ocarina_tex::kSize &&
+           t.depth == 1 && t.levels == 1 && t.layers == 1 && !t.skip && !t.sparse && !t.bc && t.block_w == 4 &&
+           t.block_h == 4;
+}
+
 std::atomic<uint64_t> work_epoch{0};
 namespace {
 // (each thread's own: the display thread's present records barriers too)
@@ -2683,8 +2695,9 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
         tex->upload_gen = gen;
         return tex;
     }
-    if (tex->keytex_wait && !tex->gpu_written) {   // (relink: a HUD cross letter uploaded before its family was known: prompt_tex.h)
-        const int s = prompt_tex_state();
+    if (tex->keytex_wait && !tex->gpu_written) {   // (relink: a HUD cross letter or an ocarina note uploaded before its
+                                                   // family was known: prompt_tex.h, ocarina_tex.h)
+        const int s = ocarina_tex_shape(*tex) ? ocarina_tex_state() : prompt_tex_state();
         if (s >= 0) {
             tex->keytex_wait = false;
             if (s > 0) {   // (uploaded again, whole: replaced now)

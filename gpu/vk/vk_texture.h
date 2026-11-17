@@ -220,5 +220,8 @@ void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, cons
 /// (relink) A texture of the HUD cross letters' shape (prompt_tex.h): BC4 UNORM, 2D, 64 x 64, one level, one layer. Only
 /// those have their blocks hashed at upload
 bool prompt_tex_shape(const Texture& t);
+/// (relink) A texture of the ocarina's note buttons' shape (ocarina_tex.h): ASTC 4x4, 2D, 93 x 93, one level, one layer.
+/// Those take the CPU's ASTC decode while the prompts' family is not the game's own, and have their blocks hashed there
+bool ocarina_tex_shape(const Texture& t);
 
 } // namespace mkwvk
