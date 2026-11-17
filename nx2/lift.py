@@ -227,7 +227,7 @@ def main():
                              counters=[] if a.no_polls else [poll.stats])
         import oot_patches
         main_build = next((m["build_id"] for m in meta["modules"] if m["name"] == "main"), "")
-        for name in ("relink_exefs_lift.txt", "relink_exefs_stop.txt"):   # (exefs_mods.LIFT_NOTES, LIFT_STOP: an earlier lift's)
+        for name in ("relink_exefs_lift.txt", "relink_exefs_stop.txt", kit.LIFT_SOURCES):   # (exefs_mods.LIFT_NOTES, LIFT_STOP: an earlier lift's)
             if os.path.exists(os.path.join(gen, name)):
                 os.remove(os.path.join(gen, name))
         try:
@@ -250,6 +250,7 @@ def main():
             print("standalone: nvn2_exports.c (%d sdk NVN functions routed to host/nvn2.c)" % len(nvn))
         L.report()
         print("interrupt polls: %d loop headers in %d functions" % (poll.stats["polls"], poll.stats["functions"]))
+        kit.note_sources(gen)   # (relink: what of nx2/ this lift read, for make_game.py's lift key)
         print("wrote %d code files to %s (%.0fs)" % (len(files), gen, time.time() - t0))
     print("done (%.0fs)" % (time.time() - t0))
 

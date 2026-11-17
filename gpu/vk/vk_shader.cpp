@@ -521,7 +521,7 @@ Shader::Profile make_profile() {
     p.support_scaled_attributes = false;   // (*_UI2F / *_I2F read as integers, converted in the shader: R32 has no scaled format)
     p.support_multi_viewport = true;
     p.support_sampled_image_array_nonuniform_indexing = true;
-    p.warp_size_potentially_larger_than_guest = false;
+    p.warp_size_potentially_larger_than_guest = dev.big_warp;   // (relink: AMD's drawing stages, 64 lanes: vk_main.cpp)
     p.lower_left_origin_mode = false;
     p.need_declared_frag_colors = false;
     p.max_subgroup_size = 32;
@@ -983,7 +983,8 @@ uint64_t disk_stamp() {
         // NaN guard, the matrix layout measured on this device. Without them a cache made on one GPU was used on another (a laptop's
         // integrated and dedicated GPUs), and RX_VK_NO_INVARIANT / RX_VK_NO_NAN_GUARD did nothing for programs already cached)
         using namespace Shader::Backend::SPIRV;
-        const uint32_t flags = (position_invariant ? 1u : 0u) | (frag_nan_guard ? 2u : 0u) | (mma_software ? 4u : 0u);
+        const uint32_t flags = (position_invariant ? 1u : 0u) | (frag_nan_guard ? 2u : 0u) | (mma_software ? 4u : 0u) |
+                               (dev.big_warp ? 8u : 0u);
         add(&flags, sizeof flags);
         add(mma_order_a.data(), sizeof(uint32_t) * mma_order_a.size());
         add(mma_order_b.data(), sizeof(uint32_t) * mma_order_b.size());

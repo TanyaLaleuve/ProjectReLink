@@ -217,6 +217,33 @@ def save_times(work, data):
         print("the build times were not saved (%s)" % e, flush=True)
 
 
+def trim_object_cache(cache):
+    """(relink) The compiled objects of this build kept in the object cache, the others removed; their bytes. An update then
+    compiles only the chunks whose lifted code, headers or flags changed (an engine change in host/ or gpu/ alone: none of the
+    game's 80 chunks) instead of the hour of a first build. The translated C (sa\\gen, ~1.3 GB) and the link's objects still go.
+    RELINK_KEEP_OBJECTS=0: the cache goes too, as before"""
+    if os.environ.get("RELINK_KEEP_OBJECTS", "1") in ("", "0") or not os.path.isdir(cache):
+        shutil.rmtree(cache, ignore_errors=True)
+        return 0
+    try:
+        with open(os.path.join(cache, "in_use.txt")) as f:
+            keep = {line.strip() + ".o" for line in f if line.strip()}
+    except OSError:   # (no list: a build that did not get to the end of its compile keeps nothing)
+        shutil.rmtree(cache, ignore_errors=True)
+        return 0
+    kept = 0
+    for name in os.listdir(cache):
+        path = os.path.join(cache, name)
+        if name in keep:
+            kept += os.path.getsize(path)
+        elif name != "in_use.txt":
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return kept
+
+
 def record_times(work, files, compile_seconds, total_seconds, modules=0, kind="build"):
     """This build in the record: what each module it compiled took (a module a cache already held keeps the time it took
     before), the compile's and the whole build's seconds. Returns the last build's total, to show beside this one."""
@@ -902,10 +929,23 @@ def lift_key(exefs, work, env):
     files = [(exefs, os.path.join(exefs, f)) for f in sorted(os.listdir(exefs))]
     if env.get("OOT_EXEFS_PATCHES"):   # (exefs mods: which patch changed which bytes, for the lift's lines; none without them)
         files.append((os.path.dirname(env["OOT_EXEFS_PATCHES"]), env["OOT_EXEFS_PATCHES"]))
+    # (relink, 17/11) Of nx2/'s Python files, those the last lift loaded (<gen>/.lift_sources, kit.note_sources), when it says:
+    # a change to the builder's other steps (this file, build.py, the assets' scripts) translated the game again, minutes for
+    # the same C. A file the lift loads that changed is in the list, and a new import comes with a change to a file in it.
+    # Without the list (a lift before this), all of them, as before
+    sources = lift_sources(work)
     for top in (HERE, os.path.join(ROOT, "third_party", "a64-kit")):
         for d, dirs, fs in os.walk(top):
             dirs[:] = sorted(x for x in dirs if x != "__pycache__")
-            files += [(ROOT, os.path.join(d, f)) for f in sorted(fs) if f.endswith((".py", ".c", ".h", ".cpp", ".hpp", ".txt", ".json"))]
+            for f in sorted(fs):
+                if not f.endswith((".py", ".c", ".h", ".cpp", ".hpp", ".txt", ".json")):
+                    continue
+                if sources is not None and top == HERE and f.endswith(".py") and \
+                        os.path.relpath(os.path.join(d, f), HERE).replace(os.sep, "/") not in sources:
+                    continue
+                files.append((ROOT, os.path.join(d, f)))
+    if sources is not None:
+        h.update(("\n".join(sorted(sources)) + "\n").encode())
     files += [(work, os.path.join(work, "hot_funcs.txt")), (work, os.path.join(work, "image", "chunks.txt"))]
     for base, f in files:
         if os.path.isfile(f):
@@ -918,6 +958,25 @@ def lift_key(exefs, work, env):
     lift_env = {k: v for k, v in lift_env.items() if k not in ("RX_PGO", "RX_VK_PGO", "RX_VK_PGO_FILE")}
     h.update(repr(sorted(lift_env.items())).encode())
     return h.hexdigest()
+
+
+def lift_sources(work):
+    """The nx2/ Python files the last lift in <work>/sa/gen loaded (kit.note_sources), or the kept lift's (LIFT_KEPT) when
+    sa/gen is gone, or None: no list (a lift before it)"""
+    for folder in (os.path.join(work, "sa", "gen"), os.path.join(work, LIFT_KEPT)):
+        try:
+            with open(os.path.join(folder, kit_sources_name()), encoding="utf-8") as f:
+                names = {line.strip() for line in f if line.strip()}
+        except OSError:
+            continue
+        if names:
+            return names
+    return None
+
+
+def kit_sources_name():
+    import kit
+    return kit.LIFT_SOURCES
 
 
 def gen_print(gen):
@@ -950,6 +1009,98 @@ def lifted_before(work, key):
     if len(lines) != 2 or lines[0] != key or lines[1] != gen_print(gen):
         return False
     return os.path.isfile(os.path.join(image, "image.bin")) and os.path.isfile(os.path.join(gen, "a64_table.c"))
+
+
+LIFT_KEPT = "lift_kept"   # (in <work>: the last lift's C and image, compressed, kept for the next update when sa goes)
+
+
+def _codec():
+    """zstandard (the builder's own), else zlib: (extension, compress, decompress)"""
+    try:
+        import zstandard
+        return (".zst", lambda b: zstandard.ZstdCompressor(level=3).compress(b),
+                lambda b: zstandard.ZstdDecompressor().decompress(b, max_output_size=1 << 32))
+    except ImportError:
+        import zlib
+        return ".zz", lambda b: zlib.compress(b, 1), zlib.decompress
+
+
+def keep_lift(work, key):
+    """(relink, 17/11) The lifted C and its image, compressed into <work>/lift_kept before sa goes at the end of a player's build
+    (~1.5 GB of C as ~100 MB, 2 s on 12 threads). The next update whose lift key is the same takes them back (restore_lift)
+    instead of translating the game again: the lift was the longest step of an update that changed the engine alone. Returns
+    the bytes kept, 0 when nothing could be"""
+    from concurrent.futures import ThreadPoolExecutor
+    kept = os.path.join(work, LIFT_KEPT)
+    shutil.rmtree(kept, ignore_errors=True)
+    if not lifted_before(work, key):
+        return 0
+    ext, comp, _ = _codec()
+    todo = []
+    for sub in ("gen", "image"):
+        src = os.path.join(work, "sa", sub)
+        os.makedirs(os.path.join(kept, sub), exist_ok=True)
+        todo += [(os.path.join(src, n), os.path.join(kept, sub, n + ext)) for n in sorted(os.listdir(src))
+                 if n != LIFT_KEY and os.path.isfile(os.path.join(src, n))]
+
+    def one(pair):
+        with open(pair[0], "rb") as f:
+            data = comp(f.read())
+        with open(pair[1], "wb") as f:
+            f.write(data)
+        return len(data)
+
+    try:
+        with ThreadPoolExecutor(max(1, min(8, os.cpu_count() or 1))) as ex:
+            total = sum(ex.map(one, todo))
+        shutil.copy2(os.path.join(work, "sa", "gen", kit_sources_name()), os.path.join(kept, kit_sources_name()))
+        with open(os.path.join(kept, "key.txt"), "w") as f:   # (last: a pack cut short has no key and is never taken)
+            f.write(key + "\n" + ext + "\n")
+    except (OSError, MemoryError) as e:
+        print("the translated code was not kept for the next update (%s): it will translate the game again" % e, flush=True)
+        shutil.rmtree(kept, ignore_errors=True)
+        return 0
+    return total
+
+
+def restore_lift(work, key):
+    """The lift kept by keep_lift, back in <work>/sa when its key is this build's: True when it is"""
+    from concurrent.futures import ThreadPoolExecutor
+    kept = os.path.join(work, LIFT_KEPT)
+    try:
+        with open(os.path.join(kept, "key.txt")) as f:
+            stored, ext = (f.read().split() + ["", ""])[:2]
+    except OSError:
+        return False
+    codec = _codec()
+    if stored != key or ext != codec[0]:
+        return False
+    decomp = codec[2]
+    todo = []
+    for sub in ("gen", "image"):
+        dst = os.path.join(work, "sa", sub)
+        if os.path.isdir(dst):
+            shutil.rmtree(dst)
+        os.makedirs(dst)
+        todo += [(os.path.join(kept, sub, n), os.path.join(dst, n[:-len(ext)])) for n in sorted(os.listdir(os.path.join(kept, sub)))
+                 if n.endswith(ext)]
+
+    def one(pair):
+        with open(pair[0], "rb") as f:
+            data = decomp(f.read())
+        with open(pair[1], "wb") as f:
+            f.write(data)
+
+    try:
+        with ThreadPoolExecutor(max(1, min(8, os.cpu_count() or 1))) as ex:
+            list(ex.map(one, todo))
+    except Exception as e:   # (OSError, MemoryError, zstandard.ZstdError, zlib.error: any of them, the lift runs instead)
+        print("the translated code kept from the last build could not be read back (%s): translating the game again" % e, flush=True)
+        for sub in ("gen", "image"):
+            shutil.rmtree(os.path.join(work, "sa", sub), ignore_errors=True)
+        return False
+    write_lift_key(work, key)
+    return lifted_before(work, key)
 
 
 def ngx_script():
@@ -1203,6 +1354,8 @@ def main(a=None):
     gen_dir = os.path.join(work, "sa", "gen")
     if lifted_before(work, key):
         print("the game was translated with these tools before: translating it again is skipped", flush=True)
+    elif restore_lift(work, key):
+        print("the translation the last build kept is this one: translating the game again is skipped", flush=True)
     else:
         key_file = os.path.join(work, "sa", "gen", LIFT_KEY)
         if os.path.exists(key_file):
@@ -1227,6 +1380,9 @@ def main(a=None):
         run(PY + ["nx2/lift.py", "--standalone", "--write", "--exefs", code, "--work", work], env, plain_stop=stop)
         if os.path.isfile(os.path.join(work, "sa", "gen", "code_hot.c")):
             run(PY + ["nx2/split_hot.py", os.path.join(work, "sa", "gen")], env)   # (eight files side by side: ~6 minutes, not 79)
+        # (the key again, from the files this lift loaded (.lift_sources): what the next build computes. The one above may have been
+        # from all of nx2/, a lift before the list)
+        key = lift_key(code, work, env)
         write_lift_key(work, key)
 
     # (relink) the Vulkan library's own profile, made like the game code's (work/relink_vk.profdata): passed to the compile unless
@@ -1298,6 +1454,7 @@ def main(a=None):
         key_file = os.path.join(work, "sa", "gen", LIFT_KEY)
         if os.path.exists(key_file):
             os.remove(key_file)
+        shutil.rmtree(os.path.join(work, LIFT_KEPT), ignore_errors=True)   # (and the kept one: the next build lifts from scratch)
         # (and its compiled objects go too: a cached runtime object from another version linked with every object "compiled in 0s"
         # and a64_dirty, a64_icall, a64_lookup, recomp_cntpct undefined, at every try (issue 1197, Linux, v2.0.10))
         for sub in (os.path.join(work, "objcache"), os.path.join(work, "sa", "build", "obj")):
@@ -1437,9 +1594,21 @@ def main(a=None):
         # ready, on Windows and Linux alike. The next update translates and compiles again, about as long as a first build.
         # RELINK_KEEP_BUILD_FILES=1 keeps them for quick updates, as before)
         if os.environ.get("RELINK_KEEP_BUILD_FILES", "0") in ("", "0"):
-            for sub in ("sa", "objcache", "probe"):
+            # (relink, 17/11) the translated code kept compressed (~200 MB of the 1.6 GB): the next update that does not change
+            # the translator skips the lift. RELINK_KEEP_LIFT=0: not kept, as before
+            if os.environ.get("RELINK_KEEP_LIFT", "1") not in ("", "0"):
+                t_keep = time.time()
+                kept_lift = keep_lift(work, key)
+                if kept_lift:
+                    print("the translated code kept for the next update: %d MB in %s (%.1fs)" % (
+                        kept_lift >> 20, os.path.join(work, LIFT_KEPT), time.time() - t_keep), flush=True)
+            else:
+                shutil.rmtree(os.path.join(work, LIFT_KEPT), ignore_errors=True)
+            for sub in ("sa", "probe"):
                 shutil.rmtree(os.path.join(work, sub), ignore_errors=True)
-            print("the build files in %s were deleted (RELINK_KEEP_BUILD_FILES=1 keeps them for quicker updates)" % work, flush=True)
+            kept = trim_object_cache(os.path.join(work, "objcache"))
+            print("the build files in %s were deleted; %d MB of compiled objects kept for the next update (RELINK_KEEP_OBJECTS=0: "
+                  "none; RELINK_KEEP_BUILD_FILES=1 keeps everything)" % (work, kept >> 20), flush=True)
     total_seconds = time.time() - STARTED
     previous = record_times(work, run_files, compile_seconds, total_seconds, modules=plan[1],
                             kind="update" if a.update else "build")

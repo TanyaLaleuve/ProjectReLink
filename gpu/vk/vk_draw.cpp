@@ -114,17 +114,25 @@ thread_local bool compute_now = false;
 // ---- (relink) RX_VK_PROF_FINE=1: where a draw's time goes, finer than the frame line's phases, and what each draw does ----
 // Off, each site is a test of one constant. On, a timed site reads the clock twice (~15 ns; the frame line's phases grow by the same, so
 // compare a run with it on to another with it on) and the sums are logged with the frame statistics, "a frame (fine)": the times in ms a
-// frame, the counts a draw. FT_*: the sections of the descriptor build (banks, c1, user uniform buffers, storage buffers, textures) and
-// of the commands (hazards and the pass, pipeline bind, descriptor push, push constants, dynamic state, vertex and index binds, the draw)
-enum FineT { FT_BANK, FT_C1, FT_UBO, FT_STORAGE, FT_TEX, FT_HAZARD, FT_BINDPL, FT_BINDDESC, FT_PUSHCALL, FT_PUSHC, FT_DYN, FT_VERTEX,
-             FT_DRAWCALL, FT_COUNT };
-const char* const kFineT[] = {"banks", "c1", "user uniform buffers", "storage buffers", "textures", "hazards+pass", "bind pipeline",
-                                      "bind descriptors", "of it the push call", "push constants", "dynamic state", "vertex+index binds",
-                                      "draw call"};
+// frame, the counts a draw. FT_*: total preparation, descriptor and command phases, plus the sections of the descriptor build
+// (banks, c1, user uniform buffers, storage buffers, textures) and of the commands (hazards and the pass, pipeline bind,
+// descriptor push, push constants, dynamic state, vertex and index binds, the draw). A total minus its named sections exposes
+// loop, lookup and diagnostic overhead that was previously outside every fine timer.
+enum FineT { FT_PREP, FT_TARGETS, FT_PROGRAM_PICK, FT_PIPE_LOOKUP, FT_DESC_TOTAL, FT_BANK, FT_C1, FT_UBO, FT_STORAGE, FT_TEX,
+             FT_CMD_TOTAL, FT_HAZARD, FT_CMD_PREPASS, FT_CMD_TRACK, FT_BINDPL, FT_BINDDESC, FT_PUSHCALL, FT_PUSHC, FT_DYN,
+             FT_CMD_POSTSTATE, FT_MESH_DRAW, FT_MESH_COUNT_BIND, FT_MESH_ARGS_BIND, FT_MESH_PUSH, FT_MESH_CALL, FT_VERTEX, FT_DRAWCALL,
+             FT_COUNT };
+const char* const kFineT[] = {"draw preparation", "targets+types", "program pick", "pipeline lookup", "descriptor total", "banks",
+                                      "c1", "user uniform buffers", "storage buffers", "textures", "command total", "hazards+pass",
+                                      "command pre-pass", "sampled-target tracking", "bind pipeline", "bind descriptors",
+                                      "of it the push call", "push constants", "dynamic state", "post-state setup",
+                                      "mesh draw setup+call", "mesh count bind", "mesh arguments bind", "mesh first push", "mesh command",
+                                      "vertex+index binds", "draw call"};
 enum FineC { FC_DRAWS, FC_BUILDS, FC_DESCS, FC_WRITES, FC_BANK_CALLS, FC_BANK_GEN, FC_BANK_FILLS, FC_BANK_FILL_BYTES, FC_BANK_SAME,
              FC_BANK_NEW, FC_BANK_NEW_BYTES, FC_C1_CALLS, FC_UBO_CALLS, FC_UBO_OVERLAY, FC_UBO_STREAM, FC_UBO_REUSE, FC_PUSH_FULL,
              FC_PUSH_DELTA, FC_PUSH_NONE, FC_PUSH_WRITES, FC_PUSH_DESCS, FC_BIND_PIPE, FC_DYN_FAST, FC_DYN_FULL, FC_DYN_CALLS,
-             FC_VBIND, FC_IBIND, FC_PUSHC, FC_PIPE_FAST, FC_PIPE_MAP, FC_POOL_SETS, FC_POOL_DESCS, FC_SSBO_DESCS, FC_COUNT };
+             FC_VBIND, FC_IBIND, FC_PUSHC, FC_PIPE_FAST, FC_PIPE_MAP, FC_POOL_SETS, FC_POOL_DESCS, FC_SSBO_DESCS, FC_MESH_DRAWS,
+             FC_MESH_INDIRECT, FC_MESH_COUNTED, FC_MESH_FIRST, FC_COUNT };
 const char* const kFineC[] = {"draws", "descriptor builds", "descriptors", "descriptor writes", "bank calls",
                                       "bank kept by its stage's generation", "bank fills", "bank bytes filled", "bank refills equal",
                                       "bank copies into the stream", "bank bytes copied", "c1 calls", "user uniform buffer calls",
@@ -134,7 +142,8 @@ const char* const kFineC[] = {"draws", "descriptor builds", "descriptors", "desc
                                       "writes pushed", "descriptors pushed", "pipeline binds", "dynamic state from the draw before",
                                       "dynamic state worked out", "dynamic state commands", "vertex stream binds", "index buffer binds",
                                       "push constants", "pipeline keys from the fast pair", "pipeline keys from the thread's map",
-                                      "sets allocated (over the push limit)", "descriptors in them", "storage buffer descriptors built"};
+                                      "sets allocated (over the push limit)", "descriptors in them", "storage buffer descriptors built",
+                                      "mesh draws", "indirect mesh draws", "counted mesh draws", "mesh draws with a nonzero first task"};
 static_assert(std::size(kFineT) == FT_COUNT && std::size(kFineC) == FC_COUNT, "every section and count is named");
 const bool g_fine = getenv("RX_VK_PROF_FINE") != nullptr;
 int64_t fine_ns[FT_COUNT], fine_n[FC_COUNT];
@@ -142,7 +151,10 @@ struct FineScope {
     int ph;
     int64_t t0;
     explicit FineScope(int p) : ph(p), t0(g_fine ? prof_now() : 0) {}
-    ~FineScope() { if (g_fine) fine_ns[ph] += prof_now() - t0; }
+    void finish() {
+        if (g_fine && t0) fine_ns[ph] += prof_now() - t0, t0 = 0;
+    }
+    ~FineScope() { finish(); }
     FineScope(const FineScope&) = delete;
     FineScope& operator=(const FineScope&) = delete;
 };
@@ -3247,6 +3259,10 @@ struct CheckpointDraw {
     LightProbe light;   // (relink, 15/11: its fragment stage's c15[452] and storage buffers, as bound)
 };
 std::unique_ptr<CheckpointDraw[]> checkpoint_draws;
+// (igpu-fix) a line of text beside a marker (checkpoint_note): which texture, level and layer a decode or an encode works on.
+// Made with the buffer markers: 8 MB
+struct CheckpointNote { char text[128]; };
+std::unique_ptr<CheckpointNote[]> checkpoint_notes;
 
 // (VK_AMD_buffer_marker, where the NV checkpoints are missing: marker i's sequence number goes to word 2i when the GPU
 // reaches it and to word 2i + 1 once all the work before it is done. Host memory, not VRAM: a GPU reset loses VRAM.)
@@ -3273,6 +3289,7 @@ void checkpoint(VkCommandBuffer cmd, const Program& p, char kind, const Targets*
     if (!checkpoints_on()) return;
     const uint32_t seq = ++checkpoint_n, i = (seq - 1) & 0xFFFF;
     checkpoints[i] = {p.key, texture_frame_no(), seq, kind};
+    if (checkpoint_notes) checkpoint_notes[i].text[0] = 0;
     if (checkpoint_draws) {   // (the slot is this marker's alone: no lock)
         CheckpointDraw& c = checkpoint_draws[i];
         c = CheckpointDraw{};
@@ -3294,6 +3311,11 @@ const char* checkpoint_kind(char c) {
     return c == 'd' ? "draw of program" : c == 'c' ? "dispatch of program" : c == 'i' ? "INDIRECT dispatch of program"
          : c == 'm' ? "mirror sync of pool"
          : c == 'b' ? "write-back of pool" : c == 'u' ? "upload of texture" : c == 'g' ? "GPU unswizzle of texture"
+         : c == 'A' ? "ASTC decode of texture" : c == 'E' ? "BC3 encode into texture" : c == 'R' ? "resize blit for texture"
+         : c == 'Z' ? "end of the uploads of texture"
+         : c == 'P' ? "PRESENT to the window, present number" : c == 'B' ? "UPLOADS: readback refresh, pools"
+         : c == 'T' ? "UPLOADS: page table, pages" : c == 'K' ? "READBACK of a GPU-drawn texture to guest memory, texture"
+         : c == 'S' ? "START of command buffer of submission" : c == 'F' ? "END of command buffer of submission"
          : "?";
 }
 
@@ -3363,6 +3385,21 @@ void checkpoint_mark(VkCommandBuffer cmd, uint64_t key, char kind) {
     const uint32_t seq = ++checkpoint_n, i = (seq - 1) & 0xFFFF;
     checkpoints[i] = {key, texture_frame_no(), seq, kind};
     if (checkpoint_draws) checkpoint_draws[i] = CheckpointDraw{};
+    if (checkpoint_notes) checkpoint_notes[i].text[0] = 0;
+    set_checkpoint(cmd, i, seq);
+}
+// (igpu-fix) a marker with a line of text kept beside it, printed in the device-lost report
+void checkpoint_note(VkCommandBuffer cmd, uint64_t key, char kind, const char* fmt, ...) {
+    if (!checkpoints_on()) return;
+    const uint32_t seq = ++checkpoint_n, i = (seq - 1) & 0xFFFF;
+    checkpoints[i] = {key, texture_frame_no(), seq, kind};
+    if (checkpoint_draws) checkpoint_draws[i] = CheckpointDraw{};
+    if (checkpoint_notes) {
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(checkpoint_notes[i].text, sizeof checkpoint_notes[i].text, fmt, ap);
+        va_end(ap);
+    }
     set_checkpoint(cmd, i, seq);
 }
 
@@ -3402,6 +3439,7 @@ void buffer_markers_init() {
     }
     std::memset(words, 0, size);
     checkpoint_draws.reset(new CheckpointDraw[1 << 16]);
+    checkpoint_notes.reset(new CheckpointNote[1 << 16]());
     marker_buffer = buffer;
     marker_words = (volatile uint32_t*)words;
     logf("vk: RX_VK_CHECKPOINTS: VK_AMD_buffer_marker, a marker before each draw and dispatch (memory type %u)", type);
@@ -3451,6 +3489,7 @@ void buffer_markers_report(const char* why = "device lost") {
                               (unsigned long long)c.light.b[j].addr, (unsigned long long)c.light.b[j].n,
                               c.light.b[j].bound ? "" : " (not bound)");
         }
+        if (checkpoint_notes && checkpoint_notes[i].text[0] && !extra[0]) snprintf(extra, sizeof extra, "; %s", checkpoint_notes[i].text);
         logf("vk:   %s: marker %u [%s] (%s %016llx, frame %llu)%s", what, s, states[state(s)], checkpoint_kind(k.kind),
              (unsigned long long)k.prog, (unsigned long long)k.frame, extra);
     };
@@ -3464,6 +3503,17 @@ void buffer_markers_report(const char* why = "device lost") {
         logf("vk:   no marker was reached with its earlier work unfinished: the GPU stopped in the work recorded right after marker "
              "%u in its command buffer (the draw or dispatch it names, then any barrier, copy or end of pass before the next "
              "marker)", last_done);
+    {   // (igpu-fix) every marker numbered after the last finished one that the GPU reached, and the upload-side ones (a recording's
+        // uploads are numbered among its draws but run before them): the start and end of each command buffer, the decodes
+        uint32_t shown = 0, more = 0;
+        for (uint32_t s = last_done + 1; last_done && s <= n; s++) {
+            const char k = checkpoints[(s - 1) & 0xFFFF].kind;
+            if (!state(s) && (k == 'd' || k == 'c' || k == 'i')) continue;
+            if (shown < 120) shown++, line("after (reached, or not a draw)", s);
+            else more++;
+        }
+        if (more) logf("vk:   ... and %u more such markers", more);
+    }
     {   // (markers numbered below the last finished one and never reached. With the parallel replay the workers number their
         // segments' markers side by side, so the highest finished marker can be a segment the GPU ran before the one that hung:
         // the hang may then be just before the lowest of these, in a segment of its own (the draws of one pass share their
@@ -3717,6 +3767,25 @@ Targets bare_targets(const NvnState& s, Targets at) {
 }
 
 /// Whether the targets of a draw kept a picture from an earlier frame (a draw left out of them shows for one frame)
+/// (relink, 17/11, issue 47 and the Discord's striped ground) Whether a draw left out of these targets is drawn again in the next
+/// frames: every target was drawn in the frame before (the scene's own, redrawn each frame) and the draw covers it, its viewport
+/// and scissor over nine tenths of it. Not a part the game draws once into a target it keeps: a tile, a decal, a shadow of a
+/// cache it updates a piece at a time. Left out, such a piece was never drawn again, and that part of the target kept what was
+/// there before until the area was loaded again: rectangular patches of the wrong texels over the ground, a few minutes into a
+/// place never seen in this session (Flix's route in the Fire Temple, every time after a fresh start; logs with draws left out
+/// in all four reports). Those wait for their pipeline instead
+bool targets_redrawn(const Targets& at, const NvnState& s) {
+    const uint64_t now = texture_frame_no();
+    const auto recent = [&](const Texture* t) { return !t || t->last_written + 1 >= now; };
+    for (int i = 0; i < at.n; i++)
+        if (!recent(at.color[i])) return false;
+    if (!recent(at.depth)) return false;
+    if (!at.width || !at.height) return false;
+    const float w = (float)at.width * 0.9f, h = (float)at.height * 0.9f;
+    if (std::fabs(s.viewport[0][2]) < w || std::fabs(s.viewport[0][3]) < h) return false;
+    if (s.scissor[2] > 0 && s.scissor[3] > 0 && ((float)s.scissor[2] < w || (float)s.scissor[3] < h)) return false;
+    return true;
+}
 bool targets_persistent(const Targets& at) {
     const uint64_t now = texture_frame_no();
     for (int i = 0; i < at.n; i++)
@@ -6077,6 +6146,8 @@ void tex_of_note(const NvnState& s, const Program& p, const Targets* at, const N
 }
 
 void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
+    FineScope fine_prep(FT_PREP);
+    FineScope fine_targets(FT_TARGETS);
     Pass& ps = pass();   // One TLS accessor for this recording thread's pass state.
     PROF_HOT(PROF_DRAW);
     FINE_N(FC_DRAWS, 1);
@@ -6112,7 +6183,9 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         }
     }
     const Program* cp;
+    fine_targets.finish();
     {
+        FINE_SCOPE(FT_PROGRAM_PICK);
         PROF_HOT(PROF_PROGRAM);
         ParLock lk(d.mesh);   // (graphics programs: each thread's picks, program_pick's own lock)
         program_load_async_here(true);   // (relink: a cached program's read goes to the workers: vk_shader.cpp)
@@ -6264,7 +6337,10 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     // (waited for by default: a draw left out showed as missing geometry in races, where many programs are new;
     // RX_VK_PIPE_SKIP=1: left out when its targets hold an earlier frame's picture, as before)
     static const bool always_wait = getenv("RX_VK_PIPE_SKIP") == nullptr;
-    const bool persistent = targets_persistent(at);
+    // (relink, issue 47: and only where the next frame draws it again, targets_redrawn. RX_VK_SKIP_PARTS=1: as before, any draw
+    // into targets that hold an earlier frame's picture)
+    static const bool skip_parts = getenv("RX_VK_SKIP_PARTS") && atoi(getenv("RX_VK_SKIP_PARTS")) != 0;
+    const bool persistent = targets_persistent(at) && (skip_parts || targets_redrawn(at, s));
     const bool may_skip = !always_wait && persistent;
     // (relink) a bounded wait (RX_VK_PIPE_WAIT_MS, default 8 a frame, 0: as before, unbounded): a draw into targets that already hold
     // an earlier frame's picture waits for its program or pipeline while this frame's waits stay under it, and is left out after
@@ -6297,6 +6373,21 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         st_waits++;
         st_wait_ms += ms, waited_ms += ms;
+        // (relink, issue 47) the draws left out and those the rule above waited for instead, named: 40 lines of each
+        static std::atomic<int> told_out{0}, told_kept{0};
+        // (waited for here, left out after the frame's wait under the rule before: a part of a kept target, with depth)
+        const bool kept_part = !bounded && !skip_parts && wait_ms > 0 && (at.depth || wait_flat) && targets_persistent(at);
+        if ((left_out && told_out.load(std::memory_order_relaxed) < 40) || (kept_part && told_kept.load(std::memory_order_relaxed) < 40)) {
+            (left_out ? told_out : told_kept)++;
+            const Texture* t0t = at.n ? at.color[0] : at.depth;
+            logf("vk: draw of program %016llx %s (%.1f ms waited): %d targets, the first #%u %ux%u NVN %#x drawn at frame %llu (now %llu), "
+                 "pass %ux%u, viewport %.0f %.0f %.0f %.0f, scissor %d %d %d %d",
+                 (unsigned long long)cp->key, left_out ? "left out (not ready)" : "waited for: a part of a target kept from earlier frames",
+                 ms, at.n + (at.depth ? 1 : 0), t0t ? t0t->id : 0u, t0t ? t0t->width : 0u, t0t ? t0t->height : 0u,
+                 t0t ? (unsigned)t0t->nvn_format : 0u, (unsigned long long)(t0t ? t0t->last_written : 0),
+                 (unsigned long long)texture_frame_no(), at.width, at.height, s.viewport[0][0], s.viewport[0][1], s.viewport[0][2],
+                 s.viewport[0][3], s.scissor[0], s.scissor[1], s.scissor[2], s.scissor[3]);
+        }
     };
     if (!cp->ready.load(std::memory_order_acquire)) {
         if (may_skip) return void(st_pending_skips++);
@@ -6328,6 +6419,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (p.fallback) topo = p.fallback_topology;   // (the mesh program's points, lines or triangles)
     PipeEntry* pe;
     {
+        FINE_SCOPE(FT_PIPE_LOOKUP);
         PROF_HOT(PROF_PIPE);
         if (!p.layout) {
             PROF_EXACT();
@@ -6386,7 +6478,9 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     static const bool no_reuse = getenv("RX_VK_NO_DESC_REUSE") != nullptr;   // (A/B: every draw builds its own)
     const bool same_desc = !no_reuse && last_desc_valid && last_desc_prog == &p && last_desc_bind == s.bind_gen &&
                            last_desc_reg == reg_gen && last_desc_ub == ub_gen;
+    fine_prep.finish();
     if (!same_desc) {
+        FINE_SCOPE(FT_DESC_TOTAL);
         PROF_HOT(PROF_DESC);
         FINE_N(FC_BUILDS, 1);
         trace_tex_hit = nullptr, trace_tex_mask = 0;
@@ -6412,6 +6506,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     if (dump_on()) log_dump_draw(s, p, d);
     PROF_HOT(PROF_CMDS);
+    FINE_SCOPE(FT_CMD_TOTAL);
     texture_watch_prog(p.key);
     if (!same_desc) gfx_sampled() = draw_sampled(), light_probe_draw = light_probe_now;
     static const bool barrier_every = getenv("RX_VK_BARRIER_EVERY_DRAW") != nullptr;   // (an experiment: a pass each)
@@ -6421,6 +6516,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         FINE_SCOPE(FT_HAZARD);
         writes = draw_hazards(cmd, p, s, at);
     }
+    FineScope fine_prepass(FT_CMD_PREPASS);
     static const bool log_self = getenv("RX_VK_LOG_SELF_SAMPLE") != nullptr;   // (relink, diagnosis: a draw sampling its own target)
     if (log_self && log_img_wanted(p.key)) {   // (and RX_VK_LOG_IMG's programs: their targets, at each new pairing)
         static std::mutex mu2;
@@ -6524,6 +6620,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     if (peek_prog(p.key)) peek_draw(cmd, p.key);   // (relink: RX_VK_PEEK_PROG)
     if (p.fallback && d.mesh && !fallback_record(cmd, p, d)) SKIP_HERE();
+    fine_prepass.finish();
     {
         FINE_SCOPE(FT_HAZARD);
         begin_pass(cmd, at);
@@ -6543,6 +6640,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     }
     probe_draw(s, p, ps.draws);   // (relink: RX_VK_PROBE)
     gprof_run(cmd, p.key);   // (RX_VK_PASS_TIMING=2)
+    FineScope fine_track(FT_CMD_TRACK);
     ps.prog = p.key;
     if (!ps.first_prog) ps.first_prog = p.key;
     for (const Texture* t : gfx_sampled()) {
@@ -6555,6 +6653,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         if (slot >= 0) ps.sampled_targets |= (uint16_t)(1u << slot);
     }
     ps.written |= writes;
+    fine_track.finish();
     if (pl != last_pipeline) {
         FINE_SCOPE(FT_BINDPL);
         FINE_N(FC_BIND_PIPE, 1);
@@ -6593,6 +6692,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         FINE_SCOPE(FT_DYN);
         dynamic_state(cmd, s, at, topo, d.mesh && !p.fallback);
     }
+    FineScope fine_poststate(FT_CMD_POSTSTATE);
     if (trace_tex_hit && texture_frame_no() % 30 == 0) {
         static std::atomic<int> told{0};
         if (told++ < 600) {
@@ -6644,7 +6744,13 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         static const bool gpu_dump_on = getenv("RX_VK_GPU_DUMP") != nullptr;
         if (stats_query.cmd && gpu_dump_on) stats_query.state = &s, stats_query.prog = p.key;
     }
+    fine_poststate.finish();
     if (d.mesh) {
+        FINE_SCOPE(FT_MESH_DRAW);
+        FINE_N(FC_MESH_DRAWS, 1);
+        FINE_N(FC_MESH_INDIRECT, d.indirect != 0);
+        FINE_N(FC_MESH_COUNTED, d.count_addr != 0);
+        FINE_N(FC_MESH_FIRST, d.first_task != 0);
         if (p.fallback) {   // (relink: the generated vertex stage reads the records; one vertex a corner)
             if (fallback_vertex_count) vkCmdDraw(cmd, fallback_vertex_count, 1, 0, 0);
             st_mesh++;
@@ -6748,32 +6854,45 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
             }
         }
         if (d.indirect) {
-            BufferRef cnt = d.count_addr ? gpu_buffer_bind(d.count_addr, 4, false) : BufferRef{};
+            BufferRef cnt;
+            {
+                FINE_SCOPE(FT_MESH_COUNT_BIND);
+                cnt = d.count_addr ? gpu_buffer_bind(d.count_addr, 4, false) : BufferRef{};
+            }
             if (mesh_conv_buf) {   // (EvilOOT: the records as {count, 1, 1}, mesh_indirect_convert)
-                if (cnt && vkCmdDrawMeshTasksIndirectCountEXT)
-                    vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_conv_buf, mesh_conv_off, cnt.buffer, cnt.offset, d.max, 12);
-                else
-                    vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_conv_buf, mesh_conv_off, std::max(d.max, 1), 12);
+                {
+                    FINE_SCOPE(FT_MESH_CALL);
+                    if (cnt && vkCmdDrawMeshTasksIndirectCountEXT)
+                        vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_conv_buf, mesh_conv_off, cnt.buffer, cnt.offset, d.max, 12);
+                    else
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_conv_buf, mesh_conv_off, std::max(d.max, 1), 12);
+                }
                 mesh_conv_buf = VK_NULL_HANDLE;
                 st_mesh++;
                 st_draws++, ps.draws++;
                 return;
             }
             if (!mesh_args.buffer) {
+                FINE_SCOPE(FT_MESH_ARGS_BIND);
                 mesh_args = gpu_buffer_bind(d.indirect, (uint64_t)std::max(d.max, 1) * std::max(d.stride, 12), false);
                 if (!mesh_args) SKIP_HERE();
             }
             const uint32_t step = mesh_args.buffer == mesh_args_buffer && mesh_args_buffer ? 16u : (uint32_t)std::max(d.stride, 12);
             if (mesh_args.buffer == mesh_args_buffer && mesh_args_buffer) {   // (the task programs' firsts: this draw's entries)
+                FINE_SCOPE(FT_MESH_PUSH);
                 const uint64_t firsts = mesh_args_address + mesh_args.offset + 12;
                 vkCmdPushConstants(cmd, p.layout, p.push_stages, Shader::Backend::SPIRV::MESH_FIRST_PUSH_OFFSET, 8, &firsts);
             }
-            if (cnt && vkCmdDrawMeshTasksIndirectCountEXT)
-                vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_args.buffer, mesh_args.offset, cnt.buffer, cnt.offset, d.max, step);
-            else
-                vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_args.buffer, mesh_args.offset, (uint32_t)std::max(d.max, 1), step);
+            {
+                FINE_SCOPE(FT_MESH_CALL);
+                if (cnt && vkCmdDrawMeshTasksIndirectCountEXT)
+                    vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_args.buffer, mesh_args.offset, cnt.buffer, cnt.offset, d.max, step);
+                else
+                    vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_args.buffer, mesh_args.offset, (uint32_t)std::max(d.max, 1), step);
+            }
         } else {
             if (mesh_args_ready()) {   // (a direct draw's first: in an entry of its own, or entry 0's 0)
+                FINE_SCOPE(FT_MESH_PUSH);
                 uint32_t at = 0;
                 if (d.first_task) {
                     at = mesh_args_take(1);
@@ -6782,8 +6901,11 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
                 const uint64_t firsts = mesh_args_address + (uint64_t)at * 16 + 12;
                 vkCmdPushConstants(cmd, p.layout, p.push_stages, Shader::Backend::SPIRV::MESH_FIRST_PUSH_OFFSET, 8, &firsts);
             }
-            vkCmdDrawMeshTasksEXT(cmd, (uint32_t)std::max(d.groups[0], 0), (uint32_t)std::max(d.groups[1], 1),
-                                  (uint32_t)std::max(d.groups[2], 1));
+            {
+                FINE_SCOPE(FT_MESH_CALL);
+                vkCmdDrawMeshTasksEXT(cmd, (uint32_t)std::max(d.groups[0], 0), (uint32_t)std::max(d.groups[1], 1),
+                                      (uint32_t)std::max(d.groups[2], 1));
+            }
         }
         st_mesh++;
         st_draws++, ps.draws++;

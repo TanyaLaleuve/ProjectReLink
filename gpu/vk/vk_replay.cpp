@@ -34,6 +34,7 @@
 #include "vk_dump.h"
 #include "vk_gprof.h"
 #include "vk_framegen.h"
+#include "hdr_out.h"   // (relink: the F12 screenshot of an HDR picture)
 #include "vk_menu.h"
 #include "oot_cheat_items.h"   // (relink: OOT_CHEAT_ITEM_BASE, OOT_CHEAT_AGE_ID: the item wheel's counts and pages)
 #include "oot_wheel_state.h"   // (relink: the Item wheel and Cycle items rows' option ids)
@@ -621,6 +622,8 @@ Recording& begin_recording(uint64_t value) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(r.cmd, &bi);
     vkBeginCommandBuffer(r.upload, &bi);
+    checkpoint_note(r.upload, value, 'S', "its uploads, VERY FIRST command (before anything else in it)");
+    checkpoint_note(r.cmd, value, 'S', "its draws, VERY FIRST command (before its timestamp reset)");
     gpu_time_begin(r);
     gprof_begin_recording(r.slot, r.cmd, r.upload);
     r.value = value;
@@ -630,6 +633,7 @@ Recording& begin_recording(uint64_t value) {
     memory_recording_value(value, completed());
     texture_begin_recording(r.upload, value);
     texture_prefetch_some();   // (relink: a few textures made ahead of their first draw, into this recording's uploads)
+    checkpoint_note(r.cmd, value, 'S', "its draws and dispatches");
     draw_begin_recording(r.slot, r.cmd, value);
     return r;
 }
@@ -637,6 +641,8 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
     const bool uploads = texture_uploads_recorded();
     gprof_submitted(r.slot, uploads);
     gpu_time_end(r);
+    if (uploads) checkpoint_note(r.upload, r.value, 'F', "its uploads");
+    checkpoint_note(r.cmd, r.value, 'F', "its draws and dispatches");
     vkEndCommandBuffer(r.upload);
     vkEndCommandBuffer(r.cmd);
     VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
@@ -3289,6 +3295,7 @@ struct ScreenShot {
     void* map = nullptr;
     uint32_t w = 0, h = 0;
     bool pending = false;
+    bool hdr = false;   // (relink: the picture's HDR10 words read as they are, made sRGB on the CPU: hdr_out.h)
     uint64_t value = 0;
 };
 ScreenShot screen_shot;
@@ -3299,6 +3306,7 @@ void screenshot_capture(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t 
         const size_t bytes = (size_t)s.w * s.h * 4;
         invalidate_mapped(s.buf_alloc, bytes);
         std::vector<uint8_t> px((const uint8_t*)s.map, (const uint8_t*)s.map + bytes);
+        if (s.hdr) hdr_out::hdr10_to_rgba8(px.data(), (size_t)s.w * s.h, hdr_paper_white_nits());
         menu_store_screenshot(std::move(px), s.w, s.h);
         destroy_image(s.image, s.image_alloc);
         destroy_buffer(s.buf, s.buf_alloc);
@@ -3310,7 +3318,8 @@ void screenshot_capture(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t 
     s.w = cropped ? (uint32_t)crop[2] : sw, s.h = cropped ? (uint32_t)crop[3] : sh;
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
-    ci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    s.hdr = hdr_output();   // (relink: the game's window textures hold PQ then: kept 10-bit, not truncated by the blit)
+    ci.format = s.hdr ? VK_FORMAT_A2B10G10R10_UNORM_PACK32 : VK_FORMAT_R8G8B8A8_UNORM;
     ci.extent = {s.w, s.h, 1};
     ci.mipLevels = ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -3541,7 +3550,13 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         {   // (RX_VK_WAIT_GPU=<frames>: the replay no further ahead of the GPU than that; =0: each
             // present waits for its own frame's GPU work, against one-frame flashes from the CPU rewriting data a pass has yet to
             // read. Not by default here (relink): measured first, it cost up to 10 fps on Windows)
-            static const int ahead = getenv("RX_VK_WAIT_GPU") ? atoi(getenv("RX_VK_WAIT_GPU")) : -1;
+            // (igpu-fix) =0 by default on AMD integrated GPUs: the GPU reads guest memory where it is, and a Radeon 890M ran far
+            // enough behind that the game had rewritten its HUD's records by the time a pass read them: icons flashing in the middle
+            // of the screen and the minimap drawn with another texture whenever the camera moved, gone with the wait (48-56 fps)
+            static const int ahead = getenv("RX_VK_WAIT_GPU") ? atoi(getenv("RX_VK_WAIT_GPU"))
+                                     : amd_igpu()
+                                         ? (logf("vk: an AMD integrated GPU: each present waits for its frame's GPU work (RX_VK_WAIT_GPU=-1: not)"), 0)
+                                         : -1;
             if (ahead == 0) wait_value(value);
             static uint64_t values[8];
             if (ahead > 0) {
@@ -3964,6 +3979,8 @@ static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4]
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(f.cmd, &bi);
     VkImage dst = dev.swap_images[index];
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "start: swapchain image %u of %ux%u, source image %p %ux%u, view %p", index,
+                    dev.swap_extent.width, dev.swap_extent.height, (void*)src, sw, sh, (void*)view);
     full_barrier(f.cmd);   // (after the game's work for the frame: earlier submits on this queue)
     image_barrier(f.cmd, dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     const bool preserve_stretch = host && host->aspect_ratio && host->aspect_ratio() > 1.0f;
@@ -3976,6 +3993,8 @@ static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4]
         // The following blit overlaps the clear in the content rectangle.
         image_barrier(f.cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     }
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "before the picture's blit or scaling (bars %d, rect %d,%d %ux%u)", has_bars ? 1 : 0,
+                    (int)rect.x, (int)rect.y, (unsigned)rect.w, (unsigned)rect.h);
     if (const VkImage scaled = src && view ? framegen_scale(f.cmd, view, src, sw, sh, crop, rect.w, rect.h) : VK_NULL_HANDLE) {
         blit_crop_to_rect(f.cmd, scaled, rect.w, rect.h, nullptr, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, rect);
     } else if (src) {
@@ -3985,6 +4004,7 @@ static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4]
         const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vkCmdClearColorImage(f.cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
     }
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "after the picture's blit, before the frame log's copy (%s)", src && framelog_on() ? "on" : "off");
     if (first_of_frame && src && framelog_on()) {
         static uint32_t seq;
         LogSlot& l = log_slots[log_slot];
@@ -3995,8 +4015,11 @@ static bool present_one(VkImage src, uint32_t sw, uint32_t sh, const int crop[4]
         vkCmdCopyImageToBuffer(f.cmd, log_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, l.buf, 1, &c);
         l.used = true, l.at = prof_now(), l.seq = seq++, l.kind = present_kind.load();
     }
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "before the menu and overlay");
     menu_record(f.cmd, dst, log_slot, dev.swap_extent.width, dev.swap_extent.height);
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "after the menu and overlay, before the swapchain image's last barrier");
     image_barrier(f.cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    checkpoint_note(f.cmd, (uint64_t)presents, 'P', "END of the present's command buffer");
     vkEndCommandBuffer(f.cmd);
     // after the image's acquisition. (Not on the timeline: one queue runs submits in order, and a wait for a value
     // another thread had counted but not yet submitted blocked the queue for good)
@@ -4722,6 +4745,10 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_TELEPORT_PICTURES) return menu_teleport_captures_on();   // (relink: host/hos_main.c oot_capture_tick)
         if (id == HOS_OPT_LOW_CAP_MFPS) return low_cap_repeats() > 1 ? low_cap_mfps.load(std::memory_order_relaxed) : 0;
         if (id == HOS_OPT_FOV) return opts.fov;   // (relink: host/nn_vi.c, nx2/oot_fov.py)
+        if (id == HOS_OPT_HDR) return hdr_output() ? 1 : 0;   // (relink: host/nn_vi.c QueryDisplayHdrStatus)
+        if (id == HOS_OPT_HDR_PEAK) return hdr_peak_nits();
+        if (id == HOS_OPT_HDR_PAPER_WHITE) return hdr_paper_white_nits();
+        if (id == HOS_OPT_KEY_FULLSCREEN) return hotkey_vk(opts.key_full);   // (relink: host/display.c)
         if (id == HOS_OPT_VOLUME) return opts.volume;   // (relink: host/nn_audio.c)
         if (id == HOS_OPT_PRESENTS_SHOWN) return presents_shown.load(std::memory_order_acquire) & 0x3fffffff;   // (relink: host/nn_vi.c)
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !dlss_full_scale() : id == 3 ? (dlss_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :

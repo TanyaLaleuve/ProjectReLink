@@ -415,6 +415,9 @@ static void load_relink_env(void) {
 
 int hos_oot_protect_hearts;
 volatile int hos_oot_live_action;   /* (test runs) the live input file's "!cheat <action>": host/nn_hid.c */
+/* (test runs) the live input file's "!pos x y z": Link moved there, as the mark and return cheats move him (actions 2, 3) */
+volatile int hos_oot_live_pos_pending;
+volatile float hos_oot_live_pos[3];
 
 int hos_oot_hearts_enabled(void) {
     int rx_option(int id, int otherwise);
@@ -1104,6 +1107,13 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
     A64Fn change_position = a64_lookup(0x806d2530ULL);
     if (!change_position) return;
 
+    if (action == 3 && __atomic_exchange_n(&hos_oot_live_pos_pending, 0, __ATOMIC_ACQ_REL)) {
+        /* (test runs, the live input file's "!pos x y z": host/nn_hid.c) the mark set there, then the return below moves Link */
+        memcpy(mark, (const float *)hos_oot_live_pos, sizeof mark);
+        marked_actor = actor;
+        marked_controller = controller;
+        hos_log("cheats: position set by the live input to %.2f %.2f %.2f", mark[0], mark[1], mark[2]);
+    }
     if (action == 2) {
         for (unsigned i = 0; i < 3; i++) {
             const uint32_t bits = recomp_load32(c, actor + 796 + i * 4);

@@ -17,7 +17,7 @@ enum { K_MUTEX = 1, K_COND, K_EVENT, K_SEMA, K_QUEUE, K_RWLOCK, K_MULTIWAIT, K_H
 typedef struct Obj {
     uint64_t key;
     int kind;
-    uint32_t ix;   /* (from HeyListen, GPL-3.0) mutex index in mx_objs once assigned (0: none): see obj_nockpt() */
+    uint32_t ix;   /* mutex index in mx_objs once assigned (0: none): see obj_nockpt() */
     SRWLOCK lk;
     CONDITION_VARIABLE cv;
     /* mutex / rwlock */
@@ -202,7 +202,7 @@ static Obj *obj(uint64_t key, int kind) {
    poke_multiwait: a stall until the vcore escape). Brought here on 12/11 with the escape fix (hos_thread.c
    hos_vcore_away), which needs it: with threads taking a core again after an escape, OoT's audio thread stood in
    event_signal behind mw_lock 77 % of the time, holding its core (hs1511), and the game started at 0.3 frames a second. */
-/* (from HeyListen 86d68f05/b67fe062, GPL-3.0) Direct mutex host-object lookup via nn::os::MutexType + 8
+/* (PR 83) Direct mutex host-object lookup via nn::os::MutexType + 8
    (the SDK's unused nesting-count field; HLE tracks count in Obj::count). Validated against Obj::key and Obj::kind
    so copied, zeroed, or reused guest memory safely falls back to obj_nockpt_slow() and renumbers.
    HOS_MUTEX_IX=1 enables (default off). */

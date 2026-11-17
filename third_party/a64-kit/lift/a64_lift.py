@@ -390,10 +390,44 @@ def mark_groups(text, stats=None):
     return "".join(out)
 
 
+def _group_file(path):
+    """(relink) group_marks' work on one file, in a worker process: whether it changed, and its counts"""
+    st = Counter()
+    with open(path, encoding="utf-8", newline="") as f:
+        text = f.read()
+    new = mark_groups(text, st)
+    if new != text:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(new)
+    return new != text, st
+
+
 def group_marks(paths, stats=None):
-    """mark_groups over C files, in place (nx2/lift.py: the lift's last step). A64_MARK_EACH=1: none. The files changed"""
+    """mark_groups over C files, in place (nx2/lift.py: the lift's last step). A64_MARK_EACH=1: none. The files changed.
+    (relink, 17/11) Each file is on its own: over worker processes (A64_MARK_JOBS, else the cores, 12 at most): 60 s of a
+    Windows lift on one core"""
     if os.environ.get("A64_MARK_EACH"):
         return 0
+    jobs = int(os.environ.get("A64_MARK_JOBS") or min(12, os.cpu_count() or 1))
+    if jobs > 1 and len(paths) > 1:
+        try:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            ctx = multiprocessing.get_context("spawn" if os.name == "nt" else None)
+            changed = 0
+            done = 0
+            with ProcessPoolExecutor(max_workers=min(jobs, len(paths)), mp_context=ctx) as pool:
+                for ch, st in pool.map(_group_file, list(paths)):
+                    changed += ch
+                    done += 1
+                    if stats is not None:
+                        for k, v in st.items():
+                            stats[k] = stats.get(k, 0) + v
+            return changed
+        except Exception as ex:   # (the workers could not run: here, one file after the other, as before)
+            if "done" in locals() and done:
+                raise   # (some files grouped already: grouping them again is not safe; the lift fails and runs again)
+            print("page marks: the worker processes stopped (%s: %s): grouped here" % (type(ex).__name__, ex), flush=True)
     changed = 0
     for path in paths:
         with open(path, encoding="utf-8", newline="") as f:
@@ -1094,6 +1128,19 @@ def fpx_header(used):
         if ("mul32", "fma32", 2, 3) in used:
             out.append(VFPX_MUL_HEADER)
     return "\n".join(out) + "\n"
+
+
+def instruction_texts(funcs, fpx):
+    """every distinct instruction of funcs translated once (per pc only where the result depends on it): key -> (C text, flags);
+    the FPX shapes met added to fpx"""
+    keys = {}
+    for body, _ in funcs.values():
+        for pc, (k, w) in body.items():
+            if k[0] == "op":
+                keys.setdefault((w, pc) if pc_relative(w) else w, (pc, w))
+    order = list(keys)
+    tx, fl = a64emit.translate([keys[x] for x in order])
+    return dict(zip(order, zip((op_text(t, fpx) for t in tx), fl)))
 
 
 def op_text(text, fpx):
@@ -1877,21 +1924,18 @@ class Lifter:
 
     def write(self, out_dir, chunk_bytes=CHUNK_BYTES):
         os.makedirs(out_dir, exist_ok=True)
-        # translate every distinct instruction once (per pc only where the result depends on it)
-        keys = {}
-        for body, _ in self.funcs.values():
-            for pc, (k, w) in body.items():
-                if k[0] == "op":
-                    keys.setdefault((w, pc) if pc_relative(w) else w, (pc, w))
-        order = list(keys)
-        tx, fl = a64emit.translate([keys[x] for x in order])
+        # translate every distinct instruction once (per pc only where the result depends on it). (relink: texts_lazy, nx2/chunks.py
+        # on Windows: the emit's worker processes make the texts of their functions themselves, and send the FPX shapes back)
         fpx = set()
-        texts = dict(zip(order, zip((op_text(t, fpx) for t in tx), fl)))
-        del tx, fl, keys, order
-        with open(os.path.join(out_dir, "a64_fpx.h"), "w", newline="\n") as f:
-            f.write(fpx_header(fpx))
-            if local_flags():
-                f.write(FCMPK_HEADER)
+        texts = None if getattr(self, "texts_lazy", False) else instruction_texts(self.funcs, fpx)
+
+        def write_fpx():
+            with open(os.path.join(out_dir, "a64_fpx.h"), "w", newline="\n") as f:
+                f.write(fpx_header(fpx | getattr(self, "fpx_extra", set())))
+                if local_flags():
+                    f.write(FCMPK_HEADER)
+        if texts is not None:
+            write_fpx()
 
         chunk, size, n, decls, files = [], 0, 0, set(), []
 
@@ -1932,6 +1976,8 @@ class Lifter:
             if size >= chunk_bytes:
                 flush()
         flush()
+        if texts is None:   # (relink: the workers' FPX shapes are all in now)
+            write_fpx()
         if hot_chunk:
             path = os.path.join(out_dir, "code_hot.c")
             with open(path, "w", newline="\n") as f:

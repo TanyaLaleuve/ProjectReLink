@@ -82,7 +82,8 @@ frames a second or unlocked, frame generation), the game's language and the cont
 you play, so that every frame lasts the same time on a 100 or 144 Hz display, and puts the display's own rate back
 afterwards. In the game, **Insert** or **F1** opens the same menu, **F11** switches full screen, and **F12** saves a
 screenshot: the game's picture at its output resolution, without the menu or the FPS counter, as a PNG in the game folder's
-`screenshots` folder (a line over the game says where).
+`screenshots` folder (a line over the game says where). These three keys can be changed in the menu's Gameplay tab
+(**Menu key**, **Screenshot key**, **Fullscreen key**: F1 to F12, Insert, Pause or Scroll Lock).
 
 **Upscaler** (since 0.7): what scales the 3D up to the screen. The game's own network by default; **AMD FSR 3.1** on any
 graphics card (AMD's library comes with ReLink); or **NVIDIA DLSS / DLAA** on an RTX card, after turning on **NVIDIA DLSS** on
@@ -130,6 +131,12 @@ and makes the swapchain's images drawable, which ReShade's effects and RenoDX's 
 `0` turns it off). A RenoDX mod for this game still has to be written for its shaders: ReLink only removes what stopped
 ReShade from drawing.
 
+**HDR** (Insert menu, Graphics, applies after a restart): the game draws its own HDR picture, as it does on an HDR TV,
+and ReLink shows it in HDR10. It needs Windows' HDR on for that display (Settings, System, Display, Use HDR); otherwise the
+picture stays SDR. The game is told the display's peak brightness as Windows reports it; the interface and menus are at the
+paper white, 203 nits by default (`hdr_paper_white=<80 to 500>` in `relink_options.ini`). Leave this row off when a RenoDX
+mod does the HDR.
+
 **Travel** (on the Cheats page: the Gameplay tab's **Cheats** row, shown unless `HOS_OOT_CHEATS=0` in `relink_env.txt` hides it, and
 Travel is that page's last row): a page of 190 places to go to, villages, dungeons' entrances, shops, warp points and story spots,
 grouped by area, for Link's age (Tab or X shows the other age's: going there makes Link that age). Once you have opened the
@@ -144,9 +151,11 @@ shows the button that presses it, so the letters follow the **Layout preset** an
 preset, the Switch's A is the right-hand button and shows Xbox's B. The labels are ReLink's own drawings, which every build
 adds to a copy of your game's button font in the `prompts` folder. The three faded letters around the HUD's action
 button, which are pictures and not letters of the font, follow too: the renderer puts ReLink's own labels in their place
-(`prompts\keytex.bin`, made by every build). It applies the next time the game starts. Not changed yet: the ocarina's
-note buttons, pictures as well, keep the Switch's; and the font has one colour, so the prompts are not coloured. A mod
-that replaces the button font wins over this row, and the faded letters then stay the Switch's too.
+(`prompts\keytex.bin`, made by every build), and so do the ocarina's note buttons (A, B, X, Y, L and R, pictures as well:
+`prompts\ocarina.bin`, made by every build from your game's own six, with the Switch's letter taken out and ReLink's label
+drawn in its place). It applies the next time the game starts. The font has one colour, so the prompts are not coloured.
+A mod that replaces the button font wins over this row, and the faded letters and the ocarina's notes then stay the
+Switch's too.
 `HOS_BUTTON_PROMPTS=0`, `xbox` or `playstation` in `relink_env.txt` stands in for it.
 
 ## Measured frame rates
@@ -351,14 +360,20 @@ pages, Y déplace un objet. **Cycle items** change l'objet de ZR d'un appui bref
 **Button prompts** (onglet Controls du menu Insert) : les boutons affichés par le jeu sont ceux d'une manette Xbox ou
 PlayStation, dessinés par ReLink, et suivent le **Layout preset** et vos propres assignations ; le réglage s'applique au
 prochain démarrage du jeu. Les trois lettres pâles autour du bouton d'action du HUD, qui sont des images, suivent aussi
-(ReLink met ses propres dessins à leur place, `prompts\keytex.bin`). Les notes de l'ocarina, des images elles aussi,
-gardent les lettres de la Switch, et la police n'a qu'une couleur.
+(ReLink met ses propres dessins à leur place, `prompts\keytex.bin`), de même que les boutons des notes de l'ocarina (des
+images elles aussi, `prompts\ocarina.bin`) ; la police n'a qu'une couleur.
 
 **Depuis la 0.7.9** : **30, smooth** (lanceur, onglet Smoothness, Frames per second) garde chaque image à l'écran le même
 temps sur les PC qui ne tiennent pas 60 ; **Field of view** (menu Insert, Graphics, 70 à 150 %) règle l'angle de la caméra et
 **Left / Right stick dead zone** (Controls, 0 à 50 %) la zone morte des sticks ; **F12** enregistre l'image du jeu en PNG
-dans le dossier `screenshots` du jeu ; les patchs de code des mods (`mods\<nom>\exefs\`, formats IPS et pchtxt) sont
+dans le dossier `screenshots` du jeu (touches du menu, de la capture et du plein écran modifiables dans l'onglet Gameplay
+depuis la 0.7.9.1) ; les patchs de code des mods (`mods\<nom>\exefs\`, formats IPS et pchtxt) sont
 appliqués quand le lanceur reconstruit le jeu (**Build again**).
+
+**Depuis la 0.7.9.1** : **HDR** (menu Insert, Graphics, après un redémarrage) affiche en HDR10 l'image HDR que le jeu dessine
+lui-même, comme sur une TV HDR ; il faut le HDR de Windows activé pour cet écran (sinon l'image reste SDR). Le blanc de
+l'interface est à 203 nits par défaut (`hdr_paper_white` dans `relink_options.ini`). Laissez-le éteint si un mod RenoDX fait
+le HDR.
 
 Il faut Windows 10 ou 11 en 64 bits, un processeur avec AVX2, une carte graphique avec Vulkan 1.3 et les mesh shaders
 (GeForce RTX 20 ou plus récente, Radeon RX 6000 ou plus récente, Intel Arc ; nous n'avons testé que sur NVIDIA), 16 Go de RAM

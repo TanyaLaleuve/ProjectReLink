@@ -340,7 +340,11 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         extern void hos_vk_note_key_press(unsigned key);
         if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
         if (wp == VK_ESCAPE) mouse_capture(w, 0);
-        if (wp == VK_F11 && !(lp & (1 << 30))) set_fullscreen(w, !fullscreen);
+        {   /* (relink) the Gameplay tab's Fullscreen key row (F11 by default, 0: none); F11 before the renderer answers */
+            int rx_option(int id, int otherwise);
+            const int full_key = rx_option(73, VK_F11);   /* (HOS_OPT_KEY_FULLSCREEN, gpu/vk/vk_menu.h) */
+            if (full_key && (int)wp == full_key && !(lp & (1 << 30))) set_fullscreen(w, !fullscreen);
+        }
         return 0;
     }
     case WM_SYSKEYDOWN:   /* Alt+Enter, as on Linux (display_sdl.c); other Alt keys (Alt+F4) go on to Windows */

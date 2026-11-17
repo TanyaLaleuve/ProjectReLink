@@ -65,6 +65,8 @@ struct Device {
     VkPhysicalDeviceVulkan12Features vk12{};
     VkPhysicalDeviceVulkan13Features vk13{};
     VkShaderStageFlags sg32_stages = 0;   // (stages that run at 32 lanes when asked: the size the translated programs assume)
+    bool big_warp = false;   // (graphics stages that may run wider than 32 lanes, not held to 32: AMD's. The translation then
+                             // keeps each 32-lane group apart: Profile::warp_size_potentially_larger_than_guest)
     uint32_t max_push_descriptors = 0;
     // no window (HOS_HEADLESS): presents go to an image of their own, which RX_VK_SHOTS can write out
     bool offscreen = false;
@@ -135,6 +137,11 @@ void coopmat_init();   // vk_coopmat.cpp (once the device is made)
 /// A marker of another kind of GPU work (m: mirror sync, b: write-back, u: texture upload, g: GPU unswizzle; key: its
 /// pool or texture), RX_VK_CHECKPOINTS
 void checkpoint_mark(VkCommandBuffer cmd, uint64_t key, char kind);
+/// (igpu-fix) the same with a line of text for the report (A: ASTC decode, E: BC3 encode, R: resize blit, Z: a texture's uploads ended)
+void checkpoint_note(VkCommandBuffer cmd, uint64_t key, char kind, const char* fmt, ...);
+/// (igpu-fix) an AMD integrated GPU with AMD's own Windows driver: where the CPU decodes the ASTC and each present waits for
+/// its frame's GPU work by default (vk_texture.cpp)
+bool amd_igpu();
 
 /// Parallel replay (vk_replay.cpp, RX_VK_PARALLEL): while segments of a submission are recorded on several threads,
 /// what they share (textures and their uploads, programs, pipelines, samplers, pools and memory stamps) is used under
@@ -237,6 +244,9 @@ int vk_value_is_mine(uint64_t v);   // (relink, diagnostic: the calling thread b
 uint64_t vk_present_value();        // (relink: the newest timeline value begun when the last present came)
 void vk_timeline_wait(uint64_t v);
 uint32_t memory_generation();
+/// (relink) bumped each time a pool leaves the table or its buffer is given back (vk_memory.cpp pools_gen): what was made over a
+/// pool's buffer before may be over a destroyed one now (texel_buffer_view)
+uint64_t memory_pools_generation();
 /// 1: a page of [guest, guest + size) was written after generation gen; 0: none was
 bool memory_written_since(uint64_t guest, uint64_t size, uint32_t gen);
 void memory_stamp(uint64_t guest, uint64_t size);   // a write the watch does not see (GPU writes, host writes)

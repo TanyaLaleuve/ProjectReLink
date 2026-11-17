@@ -16,6 +16,11 @@ enum { HOS_OPT_FOV = 13 };
 // HOS_FPS_CAP's frames as the display shows them, in thousandths of a frame a second (100 Hz holding 3 refreshes: 33333);
 // 0 when the display does not hold them (host/nn_vi.c paces to it)
 enum { HOS_OPT_LOW_CAP_MFPS = 14 };
+// (relink) HDR output (vk_main.cpp hdr_output): whether the window's images are HDR10, so the game is told its display is HDR
+// (host/nn_vi.c QueryDisplayHdrStatus) and draws its own HDR picture; the display's peak and the paper white, in nits
+enum { HOS_OPT_HDR = 70, HOS_OPT_HDR_PEAK = 71, HOS_OPT_HDR_PAPER_WHITE = 72 };
+// (relink) the fullscreen key's virtual-key code, 0 none (host/display.c; the Gameplay tab's Fullscreen key row)
+enum { HOS_OPT_KEY_FULLSCREEN = 73 };
 
 // (out of the box every feature is off: what the game does on its own. The ini beside the executable keeps a player's choices)
 struct Options {
@@ -39,6 +44,13 @@ struct Options {
     int ultrawide = 0;    // the camera at the monitor's shape when it is wider than 16:9; read once, at the start (host/hos_main.c)
     int show_fps = 0;
     int fullscreen = 0;   // borderless, at the monitor's size: F11 is the same setting
+    int hdr = 0;          // (relink) HDR output: the game's own HDR picture in HDR10, when Windows' HDR is on for the display;
+                          // read once, at the start (vk_main.cpp hdr_output; RX_VK_HDR over it)
+    // (relink) the menu's, the screenshot's and the fullscreen's keys, as indexes of vk_menu.cpp's kHotkeys (F1..F12, Insert, Pause,
+    // Scroll Lock, None): Insert, F12 and F11 by default. F1 still opens the menu while no other of these keys is F1
+    int key_menu = 12, key_shot = 11, key_full = 10;
+    int hdr_paper_white = 203;   // (relink) the nits of the game's interface and SDR white in HDR (relink_options.ini only:
+                                 // hdr_paper_white, 80 to 500; HOS_HDR_PAPER_WHITE over it)
     int gpu_device = 0;   // graphics card index: 0 Auto, 1..N device 0..N-1 (gpu/vk/vk_main.cpp; RX_VK_DEVICE)
     int pad_background = 0;   // the controllers count while another window has the focus (host/nn_hid.c; HOS_INPUT_BACKGROUND)
     int mouse_native = 0; // the mouse turns the camera's own angles (host/mouse_native.c); 0: as the right stick
@@ -79,6 +91,15 @@ extern Options opts;
 bool preset_caps_memory();
 
 void menu_init();             // (the options from the file, once)
+/// (relink, vk_main.cpp) HDR output: the player asked for it (the HDR row, RX_VK_HDR), and whether the window's images are HDR10
+/// now (the swapchain made with the ST 2084 colour space); the display's peak brightness in nits (DXGI's, 1000 when unknown)
+bool hdr_wanted();
+bool hdr_output();
+int hdr_peak_nits();
+/// (relink, vk_menu.cpp) the paper white in nits: HOS_HDR_PAPER_WHITE, else hdr_paper_white of relink_options.ini (80 to 500)
+int hdr_paper_white_nits();
+/// (relink, vk_menu.cpp) a hotkey row's value as a Windows virtual-key code (0: None)
+int hotkey_vk(int index);
 void menu_set_gpu_count(int count);
 void menu_tick();             // (each frame shown: the keys, while the game's window has the focus)
 bool menu_is_open();
