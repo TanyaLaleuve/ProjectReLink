@@ -72,31 +72,32 @@ public partial class MainWindow
             var here = i == at;
             var mark = done ? "" : here && stopped ? "" : here ? "" : "";
             var colour = done ? Res("Green") : here && stopped ? Res("Red") : here ? Res("SideText") : Res("SideSoft");
-            StepList.Children.Add(new StackPanel
-            {
-                Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2),
-                Children =
-                {
-                    new TextBlock { Text = mark, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 12, Width = 20,
-                                    Foreground = colour, VerticalAlignment = VerticalAlignment.Center },
-                    new TextBlock { Text = names[i], FontSize = 13, Foreground = here ? Res("SideText") : Res("SideSoft"),
-                                    FontWeight = here ? FontWeights.Bold : FontWeights.Normal },
-                },
-            });
+            var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };   // (a long name wraps under itself, not cut)
+            var icon = new TextBlock { Text = mark, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 12, Width = 20,
+                                       Foreground = colour, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 3, 0, 0) };
+            DockPanel.SetDock(icon, Dock.Left);
+            row.Children.Add(icon);
+            row.Children.Add(new TextBlock { Text = names[i], FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = here ? Res("SideText") : Res("SideSoft"),
+                                             FontWeight = here ? FontWeights.Bold : FontWeights.Normal });
+            StepList.Children.Add(row);
         }
         StepList.Visibility = Visibility.Visible;
     }
 
     /// While an update or a build again runs, Home, Options and Mods can be looked at: the card then leads back to the progress
-    bool Browsing => view == View.Home && runner != null;
-    bool CanBrowse => runner != null && updating && Game.Installed(outPath);
+    bool Browsing => view == View.Home && (runner != null || previewBuilding);
+    bool CanBrowse => (runner != null || previewBuilding) && updating && Game.Installed(outPath);
+    bool previewBuilding;   // (the snapshot's "home-building": Home looked at during an update)
+
+    /// "Install again" left the installed game: Home, Options and Mods lead back to it
+    bool BackToHome => view == View.Install && runner == null && s.Folder != "" && Game.Installed(s.Folder);
 
     /// The side for the page shown: called by Show and by Home's own pages
     void UpdateSide()
     {
         var home = view == View.Home;
         var hero = home && NavHome.IsChecked == true;
-        NavPanel.IsEnabled = home || (view == View.Build && CanBrowse);
+        NavPanel.IsEnabled = home || (view == View.Build && CanBrowse) || BackToHome;
         if (view != View.Home) foreach (var n in new[] { NavHome, NavOptions, NavMods }) n.IsChecked = false;   // (none lit: no Home page shows)
         FolderLink.Visibility = s.Folder != "" && Game.Installed(s.Folder) ? Visibility.Visible : Visibility.Collapsed;
         StepList.Visibility = view is View.Install or View.Build or View.Problem || Browsing ? Visibility.Visible : Visibility.Collapsed;
@@ -131,7 +132,7 @@ public partial class MainWindow
                 Steps(1);
                 UpdateLink.Visibility = Visibility.Collapsed;
                 MainButton.Visibility = Visibility.Visible;
-                MainButtonText.Text = L("Voir la progression", "See the progress");
+                MainButtonText.Text = L("Progression", "Progress");
                 MainButton.IsEnabled = true;
                 break;
             case View.Home:

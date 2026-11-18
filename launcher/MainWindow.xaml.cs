@@ -218,6 +218,7 @@ public partial class MainWindow : Window
     {
         if (HeroView == null) return;   // (the first one is checked while the window is still being made)
         if (view == View.Build && CanBrowse && sender is RadioButton { IsChecked: true }) { Show(View.Home); return; }   // (looking around while it builds)
+        if (BackToHome && sender is RadioButton { IsChecked: true }) { ShowHome(); CheckLatest(); return; }   // (out of "Install again")
         ShowHomePage();
         if (NavOptions.IsChecked == true) Dispatcher.BeginInvoke(FocusSelectedRow, DispatcherPriority.Input);
     }
@@ -303,7 +304,7 @@ public partial class MainWindow : Window
     }
 
     // ================= pictures of the window, for checking it (nothing is run) =================
-    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|mods|options|smooth|game|controls|playing
+    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|home-building|mods|options|smooth|game|controls|playing
 
     void Preview(string what)
     {
@@ -362,6 +363,12 @@ public partial class MainWindow : Window
                 ShowHome();
                 ShowVersion("v0.6.1", what == "home-update" ? "v0.7.0" : "v0.6.1", true, true);
                 if (what == "mods") { NavMods.IsChecked = true; ShowModsPage(preview: true); }
+                if (what == "home-building")
+                {
+                    outPath = s.Folder;
+                    updating = previewBuilding = true;
+                    Show(View.Home);
+                }
                 if (what == "home-mods") ShowMods(preview: 2);
                 if (what is "options" or "smooth" or "game" or "controls") NavOptions.IsChecked = true;
                 if (what == "smooth") TabSmooth.IsChecked = true;
