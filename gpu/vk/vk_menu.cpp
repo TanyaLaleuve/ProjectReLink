@@ -974,12 +974,29 @@ void mic_chosen() {
     mic_tell_host();
 }
 void save() {
-    // (relink) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
+    // (relink) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c), and every other key
+    // this file holds without a row here, the launcher's frame_rate among them (Discord, 18/11: "Fps cap get reverted to 60
+    // every time I close the game": the game's save dropped it, and the launcher read the default back)
     std::string kept;
+    std::vector<std::pair<std::string, std::string>> others;   // (each key and its line: the last line of a key kept)
     if (FILE* f = fopen(ini_path().c_str(), "r")) {
-        char line[256];
-        while (fgets(line, sizeof line, f))
-            if (!strncmp(line, "pad_", 4) || !strncmp(line, "key_", 4)) kept += line;
+        char line[512];
+        while (fgets(line, sizeof line, f)) {
+            if (!strncmp(line, "pad_", 4) || !strncmp(line, "key_", 4)) {
+                kept += line;
+                continue;
+            }
+            const char* eq = strchr(line, '=');
+            if (!eq || line[0] == '#') continue;
+            const std::string key(line, (size_t)(eq - line));
+            bool mine = key == "microphone_device" || key == "hdr_paper_white" || key == "options_version";
+            for (const Row& r : rows) mine |= r.value && key == ini_key(r);
+            if (mine) continue;
+            std::string text(line);
+            if (text.back() != '\n') text += '\n';
+            std::erase_if(others, [&](const auto& o) { return o.first == key; });
+            others.emplace_back(key, std::move(text));
+        }
         fclose(f);
     }
     if (FILE* f = fopen(ini_path().c_str(), "w")) {
@@ -990,6 +1007,7 @@ void save() {
         // (2: game_speed below 2 was only ever the old default, see menu_init; 3: the mouse's buttons are bindings, see
         // host/nn_hid.c binds_load)
         fprintf(f, "options_version=3\n");
+        for (const auto& o : others) fputs(o.second.c_str(), f);
         if (!can_bind()) fputs(kept.c_str(), f);
         for (int i = 0; i < HOS_KEY_N && can_bind(); i++) {   // (the keys-only controls, HOS_KEY_*, have no pad_ line)
             if (i < HOS_SW_N) fprintf(f, "pad_%s=%d\n", bind_names[i], host->binding(HOS_BIND_PAD, i, 0));
