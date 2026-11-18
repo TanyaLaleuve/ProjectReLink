@@ -390,46 +390,83 @@ def mark_groups(text, stats=None):
     return "".join(out)
 
 
+_GROUPED = ".grouped"   # (a worker's result for a file, beside it until the lift's process puts it in its place)
+
+
 def _group_file(path):
-    """(relink) group_marks' work on one file, in a worker process: whether it changed, and its counts"""
+    """(relink) group_marks' work on one file, in a worker process: whether it changed, and its counts. The new text goes
+    beside the file (path + _GROUPED): only the lift's own process replaces the file, so a worker that dies halfway leaves
+    every file either grouped once or as the lift wrote it"""
     st = Counter()
     with open(path, encoding="utf-8", newline="") as f:
         text = f.read()
     new = mark_groups(text, st)
+    if os.environ.get("A64_MARK_TEST_DIE") == os.path.basename(path):   # (tests: a worker that dies halfway)
+        open(path + _GROUPED, "w").write(new[:len(new) // 2])
+        os._exit(3)
     if new != text:
-        with open(path, "w", encoding="utf-8", newline="") as f:
+        with open(path + _GROUPED, "w", encoding="utf-8", newline="") as f:
             f.write(new)
     return new != text, st
 
 
+def mark_jobs(files):
+    """(relink, 18/11) Processes for the page marks: A64_MARK_JOBS, else the cores (12 at most) and at most one per GB of
+    available memory beyond 2 GB. Each holds a 24 MB file, its lines and its new text, while the lift's own process still
+    holds the lifter; with 12 regardless of memory a 16 GB PC ran short, and the workers died with errors of every kind
+    ("internal error in regular expression engine", "BrokenProcessPool", "access violation writing", Discord 18/11)"""
+    if os.environ.get("A64_MARK_JOBS"):
+        return max(1, int(os.environ["A64_MARK_JOBS"]))
+    n = max(1, min(12, os.cpu_count() or 1, files))
+    try:
+        import chunks   # (nx2: the available memory, as the emit's workers count it)
+        gb = chunks._available_gb()
+    except ImportError:
+        gb = None
+    if gb is not None:
+        n = max(1, min(n, int(gb - 2)))
+    return n
+
+
 def group_marks(paths, stats=None):
     """mark_groups over C files, in place (nx2/lift.py: the lift's last step). A64_MARK_EACH=1: none. The files changed.
-    (relink, 17/11) Each file is on its own: over worker processes (A64_MARK_JOBS, else the cores, 12 at most): 60 s of a
-    Windows lift on one core"""
+    (relink, 17/11) Each file is on its own: over worker processes (mark_jobs): 60 s of a Windows lift on one core. A worker
+    that stops (memory, a crash) no longer ends the lift: the files whose results did not come back are grouped here"""
     if os.environ.get("A64_MARK_EACH"):
         return 0
-    jobs = int(os.environ.get("A64_MARK_JOBS") or min(12, os.cpu_count() or 1))
+    paths = list(paths)
+    jobs = mark_jobs(len(paths))
+    changed = 0
+    left = paths
     if jobs > 1 and len(paths) > 1:
+        done = set()
         try:
             import multiprocessing
-            from concurrent.futures import ProcessPoolExecutor
+            from concurrent.futures import ProcessPoolExecutor, as_completed
             ctx = multiprocessing.get_context("spawn" if os.name == "nt" else None)
-            changed = 0
-            done = 0
-            with ProcessPoolExecutor(max_workers=min(jobs, len(paths)), mp_context=ctx) as pool:
-                for ch, st in pool.map(_group_file, list(paths)):
-                    changed += ch
-                    done += 1
+            print("page marks: %d processes" % jobs, flush=True)
+            with ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as pool:
+                futures = {pool.submit(_group_file, p): p for p in paths}
+                for fut in as_completed(futures):
+                    path = futures[fut]
+                    ch, st = fut.result()
+                    if ch:
+                        os.replace(path + _GROUPED, path)
+                        changed += 1
+                    done.add(path)
                     if stats is not None:
                         for k, v in st.items():
                             stats[k] = stats.get(k, 0) + v
-            return changed
-        except Exception as ex:   # (the workers could not run: here, one file after the other, as before)
-            if "done" in locals() and done:
-                raise   # (some files grouped already: grouping them again is not safe; the lift fails and runs again)
-            print("page marks: the worker processes stopped (%s: %s): grouped here" % (type(ex).__name__, ex), flush=True)
-    changed = 0
-    for path in paths:
+        except Exception as ex:   # (a worker that could not start or stopped: the files not done yet, here)
+            print("page marks: the worker processes stopped (%s: %s): the last %d of %d files are grouped here"
+                  % (type(ex).__name__, ex, len(paths) - len(done), len(paths)), flush=True)
+        left = [p for p in paths if p not in done]
+        for p in left:   # (a dead worker's half-written result)
+            try:
+                os.remove(p + _GROUPED)
+            except OSError:
+                pass
+    for path in left:
         with open(path, encoding="utf-8", newline="") as f:
             text = f.read()
         new = mark_groups(text, stats)
