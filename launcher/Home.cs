@@ -488,7 +488,7 @@ public partial class MainWindow
 
     void RebuildClick(object sender, RoutedEventArgs e)
     {
-        if (game != null || !Game.Installed(s.Folder) || !Game.KeepsGameFiles(s.Folder)) return;
+        if (game != null || runner != null || !Game.Installed(s.Folder) || !Game.KeepsGameFiles(s.Folder)) return;
         var tools = Tools.Find();
         if (tools == null)
         {

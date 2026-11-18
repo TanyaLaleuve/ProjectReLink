@@ -148,7 +148,7 @@ public partial class MainWindow
     {
         if (version == null)
         {
-            Card(L("Jeu construit depuis les sources", "Built from the sources"));
+            Card(L("Version de dev", "Dev build"));   // (built from the sources: no release number)
             UpdateLink.Visibility = Visibility.Collapsed;
             MainNote.Text = next != null ? L($"Dernière version publiée : {next}.", $"Latest release: {next}.") : "";
             return;

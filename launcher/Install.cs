@@ -433,6 +433,7 @@ public partial class MainWindow
         runner.Line += l => Dispatcher.BeginInvoke(() => Line(l));
         runner.Finished += failure => Dispatcher.BeginInvoke(() => Ended(failure));
         runner.Start();
+        UpdateSide();   // (now that it runs: an update or a build again lets Home, Options and Mods be looked at)
     }
 
     static readonly Regex FilesLine = new(@"^(\d+) files, "), FileLine = new(@"^\s+\S+\s+\d+ MB\s+\d+s");
@@ -559,7 +560,7 @@ public partial class MainWindow
         }
         if (failure == "cancelled")
         {
-            if (updating && Game.Installed(outPath)) ShowHome();
+            if (updating && Game.Installed(outPath)) { ShowHome(); CheckLatest(); }
             else ShowInstall();
             return;
         }

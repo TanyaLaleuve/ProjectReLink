@@ -143,7 +143,7 @@ public partial class MainWindow
             foreach (var p in problems.Take(8))
                 ModsList.Children.Add(new TextBlock { Text = p, Style = St("RowHint"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 2, 0, 2) });
         }
-        ModsRebuild.Visibility = !preview && s.Folder != "" && Game.Installed(s.Folder) && Game.KeepsGameFiles(s.Folder) &&
+        ModsRebuild.Visibility = !preview && runner == null && s.Folder != "" && Game.Installed(s.Folder) && Game.KeepsGameFiles(s.Folder) &&
                                  ExefsMods.Changed(s.Folder, out _) ? Visibility.Visible : Visibility.Collapsed;
     }
 
