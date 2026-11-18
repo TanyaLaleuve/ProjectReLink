@@ -356,7 +356,25 @@ public partial class MainWindow
         var count = preview;
         var changed = preview > 0 || (folder != "" && Game.Installed(folder) && ExefsMods.Changed(folder, out count));
         ModsRow.Visibility = changed ? Visibility.Visible : Visibility.Collapsed;
-        if (!changed) return;
+        if (!changed)
+        {
+            // (built with them: the patches the build did not apply, said here; the player saw only that nothing changed)
+            var problems = folder != "" && Game.Installed(folder) ? ExefsMods.Problems(folder) : new List<string>();
+            if (problems.Count == 0) return;
+            ModsRow.Visibility = Visibility.Visible;
+            RebuildLink.Visibility = Visibility.Collapsed;
+            ModsText.Text = problems.Count == 1
+                ? L("1 patch de code de vos mods n'a pas d'effet.", "1 code patch of your mods has no effect.")
+                : L($"{problems.Count} patchs de code de vos mods n'ont pas d'effet.", $"{problems.Count} code patches of your mods have no effect.");
+            ModsText.ToolTip = new ToolTip
+            {
+                Style = St("Tip"),
+                Content = string.Join("\n", problems.Take(6)) + (problems.Count > 6 ? "\n…" : "") + "\n\n" +
+                          L("Le détail est dans relink_exefs_mods.txt, dans le dossier du jeu. \"made for the module … not one of this game's\" : le mod est fait pour une autre version du jeu.",
+                            "The details are in relink_exefs_mods.txt, in the game folder. \"made for the module … not one of this game's\": the mod is made for another version of the game."),
+            };
+            return;
+        }
         var rebuild = preview > 0 || Game.KeepsGameFiles(folder);
         ModsText.Text = rebuild ? L("Mods exefs modifiés depuis la construction.", "Exefs mods changed since the last build.")
                                 : L("Mods exefs modifiés : installez de nouveau le jeu.", "Exefs mods changed: install the game again.");

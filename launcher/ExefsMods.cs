@@ -105,6 +105,22 @@ static class ExefsMods
         catch (Exception) { return null; }
     }
 
+    /// (Discord, 18/11: "i rebuilt the game with some exefs mods and nothing changed") The report's lines for the patches the last
+    /// build did not apply or that change nothing here: a mod for another version of the game, code ReLink runs with its own,
+    /// words in no translated function, two patches at the same place. Empty when every patch applied (or none, or no report)
+    public static List<string> Problems(string folder)
+    {
+        var lines = new List<string>();
+        try
+        {
+            foreach (var line in File.ReadLines(Path.Combine(folder, Report)).Skip(1))
+                if (line.StartsWith("left out") || line.StartsWith("no effect") || line.StartsWith("not translated") || line.StartsWith("conflict"))
+                    lines.Add(line.Trim());
+        }
+        catch (Exception) { }
+        return lines;
+    }
+
     /// The patch files in mods now are not the ones the game was built with (count: how many there are now)
     public static bool Changed(string folder, out int count)
     {
