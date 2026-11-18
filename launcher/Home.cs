@@ -169,6 +169,8 @@ public partial class MainWindow
             },
         });
 
+        BuildShortcutRows();
+
         // ---- controls
         RowsControls.Children.Add(new TextBlock
         {
@@ -319,8 +321,16 @@ public partial class MainWindow
         var res = s.Resolution switch { 1 => L("Native", "Native"), 0 => L("Automatique", "Automatic"), 2 => "75 %", 3 => "67 %", 5 => "58 %", 4 => "50 %", _ => "" };
         var up = s.Upscaler switch { 3 => "AMD FSR", 4 => L("AMD FSR, AA natif", "AMD FSR native AA"), 1 => "NVIDIA DLSS", 2 => "NVIDIA DLAA", _ => L("Celui du jeu", "The game's own") };
         LooksText.Text = $"{(s.Fullscreen != 0 ? L("Plein écran", "Full screen") : L("Fenêtre", "Window"))} · {res} · {up}";
-        var rate = s.FrameRate switch { 1 => L("Débloqué", "Unlocked"), 2 => L("30, fluide", "30, smooth"), _ => L("60, comme la console", "60, as on the console") };
+        var rate = s.FrameRate switch { 1 => L("FPS débloqués", "Unlocked fps"), 2 => L("30 fps réguliers", "Even 30 fps"), _ => "60 fps" };
         MovesText.Text = s.FrameGeneration >= 2 ? $"{rate} · ×{s.FrameGeneration}" : rate;
+        LooksSub.Text = L($"Netteté {s.Sharpness} %", $"Sharpness {s.Sharpness} %") + (s.Ultrawide != 0 ? L(" · ultra-large", " · ultrawide") : "");
+        MovesSub.Text = (s.FrameGeneration >= 2 ? L("Génération d'images", "Frame generation") : L("Sans génération d'images", "No frame generation")) +
+                        (s.VSync != 0 ? " · V-Sync" : "");
+        // (the sky's line: once, after an install or an update, what the first start does; the rest of the time the name's)
+        HeroSub.Text = justBuilt ? L("Prêt à jouer ! Le premier lancement prépare les shaders pour votre carte graphique : une fois, environ 15 minutes.",
+                                     "Ready to play! The first start prepares the shaders for your graphics card: once, about 15 minutes.")
+                                 : L("recompilé pour votre PC", "recompiled for your PC");
+        UpdateHomeCards();
     }
 
     void Keys(string title, (string Key, string What)[] list)
@@ -430,26 +440,9 @@ public partial class MainWindow
             if ((int)r.Tag is 1 or 2) r.Visibility = s.NvidiaDlss || s.Upscaler is 1 or 2 ? Visibility.Visible : Visibility.Collapsed;
         // (frame generation fills the display's own refresh: no switch to 60 Hz then)
         Display60.IsEnabled = display60Possible && s.FrameGeneration < 2;
-        if (view is View.Home or View.Ready) MainNote.Text = PlaySummary();
         UpdateHero();
         ShowRowHelp();
         ShowChecks();
-    }
-
-    /// What Play will do, in one line under the button
-    string PlaySummary()
-    {
-        var parts = new List<string> { s.Fullscreen != 0 ? L("plein écran", "full screen") : L("fenêtre", "window") };
-        if (s.Display60 && origHz != 60 && origHz > 0 && display60Possible && s.FrameGeneration < 2) parts.Add(L("écran à 60 Hz", "display at 60 Hz"));
-        if (s.FrameGeneration >= 2) parts.Add(L($"images ×{s.FrameGeneration}", $"frames ×{s.FrameGeneration}"));
-        else parts.Add(s.FrameRate switch
-        {
-            1 => L("images débloquées", "unlocked frame rate"),
-            2 => L("30 images par seconde, régulières", "30 even frames a second"),
-            _ => L("60 images par seconde", "60 frames a second"),
-        });
-        var line = string.Join(", ", parts);
-        return char.ToUpper(line[0]) + line[1..] + ".";
     }
 
     void Changed()
@@ -470,39 +463,28 @@ public partial class MainWindow
         try { if (s.Folder != "") s.LoadGame(); } catch (Exception) { }
         ShowSettings();
         UpdateScreen();
-        MainButton.IsEnabled = Game.Installed(s.Folder) && game == null;
-        MainNote.Text = PlaySummary();
+        MainNote.Text = "";
         var version = s.Folder == "" ? null : Game.Version(s.Folder);
-        StatusText.Text = version != null ? L($"Version {version}.", $"Version {version}.") : L("Jeu construit depuis les sources.", "Game built from the sources.");
-        UpdateLink.Visibility = Visibility.Collapsed;
+        if (version != null) Card(version);   // (its state, up to date or not, once CheckLatest knows it)
+        else ShowVersion(null, null, false, true);
+        UpdateSide();
         ShowMods();
     }
 
     /// Exefs mods (ExefsMods.cs): the code patches in the folder's mods take effect when the game is built. When they are not
-    /// the ones it was built with, a line under the version says so, with Build again (or, for a folder that keeps no game
-    /// files, install again). preview: the snapshot's (2 patch files)
+    /// the ones it was built with, or the last build left some without effect, a badge on Mods says so; the Mods page says what,
+    /// with Build again. preview: the snapshot's (2 patch files)
     void ShowMods(int preview = 0)
     {
         var folder = s.Folder;
-        var count = preview;
-        var changed = preview > 0 || (folder != "" && Game.Installed(folder) && ExefsMods.Changed(folder, out count));
-        ModsRow.Visibility = changed ? Visibility.Visible : Visibility.Collapsed;
-        if (!changed) return;
-        var rebuild = preview > 0 || Game.KeepsGameFiles(folder);
-        ModsText.Text = rebuild ? L("Mods exefs modifiés depuis la construction.", "Exefs mods changed since the last build.")
-                                : L("Mods exefs modifiés : installez de nouveau le jeu.", "Exefs mods changed: install the game again.");
-        RebuildLink.Visibility = rebuild ? Visibility.Visible : Visibility.Collapsed;
-        var what = count == 0 ? L("Il n'y a plus de patch de code dans mods : le jeu garde ceux avec lesquels il a été construit.",
-                                  "There are no code patches in mods now: the game keeps the ones it was built with.")
-                 : count == 1 ? L("1 patch de code (.ips, .pchtxt) dans mods.", "1 code patch (.ips, .pchtxt) in mods.")
-                 : L($"{count} patchs de code (.ips, .pchtxt) dans mods.", $"{count} code patches (.ips, .pchtxt) in mods.");
-        ModsText.ToolTip = new ToolTip
-        {
-            Style = St("Tip"),
-            Content = what + " " + L("ReLink traduit le code du jeu quand il le construit : un patch de code ne compte qu'une fois le jeu reconstruit.",
-                                     "ReLink translates the game's code when it builds the game: a code patch takes effect once the game is built again."),
-        };
+        var changed = preview > 0 || (folder != "" && Game.Installed(folder) && ExefsMods.Changed(folder, out _));
+        var problems = preview == 0 && folder != "" && PatchProblems(folder).Count > 0;
+        ModsBadge.Visibility = changed || problems ? Visibility.Visible : Visibility.Collapsed;
+        modsToBuild = changed;
+        UpdateHomeCards();
     }
+
+    bool modsToBuild;
 
     void RebuildClick(object sender, RoutedEventArgs e)
     {
@@ -572,23 +554,8 @@ public partial class MainWindow
         latestTag = await Updater.LatestTag();
         if (view != View.Home || folder != s.Folder) return;
         updateTarget = latestTag ?? Tools.Find()?.Version;
-        UpdateLink.Visibility = Visibility.Collapsed;
-        if (version == null)
-        {
-            StatusText.Text = latestTag != null ? L($"Jeu construit depuis les sources. Dernière version publiée : {latestTag}.", $"Game built from the sources. Latest release: {latestTag}.")
-                                                : L("Jeu construit depuis les sources.", "Game built from the sources.");
-            return;
-        }
-        if (updateTarget == null) StatusText.Text = L($"Version {version}. Les mises à jour n'ont pas pu être vérifiées.", $"Version {version}. Updates could not be checked.");
-        else if (version != updateTarget && Game.KeepsGameFiles(folder))
-        {
-            StatusText.Text = L($"Version {version}. La {updateTarget} est disponible.", $"Version {version}. {updateTarget} is available.");
-            UpdateLink.Visibility = Visibility.Visible;
-        }
-        else if (version != updateTarget)
-            StatusText.Text = L($"Version {version}. La {updateTarget} est sortie : installez de nouveau le jeu pour l'obtenir.", $"Version {version}. {updateTarget} is out: install the game again to get it.");
-        else StatusText.Text = latestTag == null ? L($"Version {version}. Les mises à jour n'ont pas pu être vérifiées.", $"Version {version}. Updates could not be checked.")
-                                                 : L($"Version {version}, à jour.", $"Version {version}, up to date.");
+        MainNote.Text = "";
+        ShowVersion(version, version == null ? latestTag : updateTarget, version != null && Game.KeepsGameFiles(folder), @checked: latestTag != null || version == null);
     }
 
     void UpdateClick(object sender, RoutedEventArgs e)
@@ -600,8 +567,8 @@ public partial class MainWindow
     // ---------------------------------------------------------------- play
     void Play()
     {
-        var folder = view == View.Ready && finished.Length > 0 ? finished : s.Folder;
-        if (game != null || !Game.Installed(folder)) return;
+        var folder = s.Folder;
+        if (game != null || runner != null || !Game.Installed(folder)) return;
         s.Folder = folder;
         try { s.Save(); }
         catch (Exception ex) { MainNote.Text = L("Réglages non enregistrés : ", "Settings not saved: ") + ex.Message; return; }
@@ -634,6 +601,7 @@ public partial class MainWindow
         game.EnableRaisingEvents = true;
         game.Exited += (_, _) => Dispatcher.BeginInvoke(GameEnded);
         MainButton.IsEnabled = false;
+        justBuilt = false;
         ShowPlaying(screenNote == "" ? L("Le jeu tourne.", "The game is running.") : screenNote);
         WindowState = WindowState.Minimized;
     }

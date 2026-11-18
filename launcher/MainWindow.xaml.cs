@@ -16,7 +16,7 @@ namespace ReLink;
 /// the install and the update; Home.cs: the settings and the game itself).
 public partial class MainWindow : Window
 {
-    enum View { Install, Build, Ready, Problem, Home }
+    enum View { Install, Build, Problem, Home }
 
     Settings s = new();
     readonly Staff staff;
@@ -47,8 +47,8 @@ public partial class MainWindow : Window
         clock.Tick += (_, _) => Tick();
         padTimer.Tick += (_, _) => UpdatePads();
         ApplyTexts();
+        WatchNote();
         BuildHomeRows();
-        BuildReadyRows();
         HomeView.PreviewKeyDown += OptionsKey;   // (the options as the in-game menu: the arrows, Q and E)
         // (the window has no title bar: it moves by any place that is not a control)
         MouseLeftButtonDown += (_, e) =>
@@ -72,19 +72,21 @@ public partial class MainWindow : Window
 
     void ApplyTexts()
     {
-        Subtitle.Text = L("Ocarina of Time, recompilé pour votre PC", "Ocarina of Time, recompiled for your PC");
         HeroSub.Text = L("recompilé pour votre PC", "recompiled for your PC");
-        NavHome.Content = L("Accueil", "Home");
-        NavOptions.Content = L("Options", "Options");
+        SidebarTexts();
         LooksHead.Text = L("L'image", "How it looks");
         MovesHead.Text = L("La fluidité", "How it moves");
         LooksMore.Text = MovesMore.Text = L("Changer ›", "Change ›");
-        HelpLink.Content = L("Aide", "Help");
-        FolderLink.Content = L("Dossier du jeu", "Game folder");
-        DiscordLink.Content = "Discord";
-        DiscordLink.ToolTip = new ToolTip { Style = St("Tip"), Content = L($"Rejoindre le serveur Discord de {Texts.Name}", $"Join the {Texts.Name} Discord server") };
-        UpdateLink.Content = L("Mettre à jour", "Update");
-        RebuildLink.Content = L("Reconstruire", "Build again");
+        ModsHead.Text = "Mods";
+        ModsMore.Text = L("Gérer ›", "Manage ›");
+        NewsHead.Text = L("Nouveautés", "What's new");
+        NewsMore.Text = L("Lire les notes ›", "Read the notes ›");
+        HeroPlayText.Text = L("Jouer", "Play");
+        ModsTitle.Text = "Mods";
+        ModsIntro.Text = L("Les mods du dossier mods du jeu. Les mods romfs (textures, modèles, sons, textes) comptent dès le prochain lancement ; les mods exefs (patchs de code) demandent de reconstruire le jeu.",
+                           "The mods in the game folder's mods. RomFS mods (textures, models, sounds, text) count from the next start; exefs mods (code patches) need the game built again.");
+        ModsOpenFolder.Content = L("Ouvrir le dossier mods", "Open the mods folder");
+        ModsRebuild.Content = L("Reconstruire avec les patchs de code", "Build again with the code patches");
 
         InstallTitle.Text = L("Installer le jeu", "Install the game");
         InstallSub.Text = L("ReLink fabrique le jeu sur ce PC à partir de votre propre copie. Il faut le jeu avec sa mise à jour v131072 (build e0f3ccfa) : les autres versions ne fonctionnent pas. Cela se fait une fois et prend de 10 à 45 minutes.",
@@ -97,7 +99,6 @@ public partial class MainWindow : Window
 
         LogLink.Content = L("Afficher les détails", "Show details");
         CancelLink.Content = L("Annuler", "Cancel");
-        ReadySettings.Content = L("Régler le jeu", "Set up the game");
         BackLink.Content = L("Retour", "Back");
         RepairLink.Content = L("Réparer", "Repair");
         DetailsLink.Content = L("Afficher les détails", "Show details");
@@ -175,23 +176,18 @@ public partial class MainWindow : Window
         view = v;
         var pages = new (View Is, FrameworkElement Page)[]
         {
-            (View.Install, InstallView), (View.Build, BuildView), (View.Ready, ReadyView), (View.Problem, ProblemView),
+            (View.Install, InstallView), (View.Build, BuildView), (View.Problem, ProblemView),
         };
         foreach (var (k, page) in pages)
         {
             page.Visibility = k == v ? Visibility.Visible : Visibility.Collapsed;
             if (k == v) Appear(page);
         }
+        // (Home shows one of its pages: Home itself when coming back from the install, the build or a problem)
+        if (v == View.Home && NavHome.IsChecked != true && NavOptions.IsChecked != true && NavMods.IsChecked != true) NavHome.IsChecked = true;
         ShowHomePage();
-        // (the side says the same thing as the page: Home and Options, and Play, once there is a game; the percentage is the build's)
-        NavPanel.Visibility = v == View.Home ? Visibility.Visible : Visibility.Collapsed;
         ProgressBlock.Visibility = v == View.Build ? Visibility.Visible : Visibility.Collapsed;
-        MainButton.Visibility = v is View.Install or View.Ready or View.Home ? Visibility.Visible : Visibility.Collapsed;
-        MainNote.Visibility = MainButton.Visibility;
-        StatusRow.Visibility = v == View.Home ? Visibility.Visible : Visibility.Collapsed;
-        if (v != View.Home) ModsRow.Visibility = Visibility.Collapsed;
-        FolderLink.Visibility = v is View.Ready or View.Home ? Visibility.Visible : Visibility.Collapsed;
-        if (v is View.Ready or View.Home) MainButtonText.Text = L("Jouer", "Play");
+        UpdateSide();   // (Sidebar.cs: the side for this page)
     }
 
     void Appear(FrameworkElement page)
@@ -207,15 +203,21 @@ public partial class MainWindow : Window
         var home = view == View.Home;
         var hero = home && NavHome.IsChecked == true;
         var options = home && NavOptions.IsChecked == true;
+        var mods = home && NavMods.IsChecked == true;
         if (hero && HeroView.Visibility != Visibility.Visible) Appear(HeroView);
         if (options && HomeView.Visibility != Visibility.Visible) Appear(HomeView);
+        if (mods && ModsView.Visibility != Visibility.Visible) { ShowModsPage(); Appear(ModsView); }
         HeroView.Visibility = hero ? Visibility.Visible : Visibility.Collapsed;
         HomeView.Visibility = options ? Visibility.Visible : Visibility.Collapsed;
+        ModsView.Visibility = mods ? Visibility.Visible : Visibility.Collapsed;
+        // (Home's Play is in the sky: the card's goes there; on the options and the mods it stays at hand)
+        if (home) UpdateSide();
     }
 
     void NavChanged(object sender, RoutedEventArgs e)
     {
         if (HeroView == null) return;   // (the first one is checked while the window is still being made)
+        if (view == View.Build && CanBrowse && sender is RadioButton { IsChecked: true }) { Show(View.Home); return; }   // (looking around while it builds)
         ShowHomePage();
         if (NavOptions.IsChecked == true) Dispatcher.BeginInvoke(FocusSelectedRow, DispatcherPriority.Input);
     }
@@ -229,7 +231,9 @@ public partial class MainWindow : Window
     void MainClick(object sender, RoutedEventArgs e)
     {
         if (view == View.Install) StartInstall();
-        else if (view is View.Ready or View.Home) Play();
+        else if (view == View.Problem && repairable) Repair(sender, e);
+        else if (Browsing) Show(View.Build);   // (Home looked at while the game builds: back to the progress)
+        else if (view == View.Home) Play();
     }
 
     void TabChanged(object sender, RoutedEventArgs e)
@@ -254,7 +258,7 @@ public partial class MainWindow : Window
 
     void OpenGameFolder(object sender, RoutedEventArgs e)
     {
-        var folder = view == View.Ready && finished.Length > 0 ? finished : s.Folder;
+        var folder = s.Folder;
         if (folder != "" && Directory.Exists(folder)) Open(folder);
     }
 
@@ -299,7 +303,7 @@ public partial class MainWindow : Window
     }
 
     // ================= pictures of the window, for checking it (nothing is run) =================
-    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|options|smooth|game|controls|playing
+    //   ReLink.exe --snapshot out.png --view install|build|update|ready|problem|home|home-update|home-mods|mods|options|smooth|game|controls|playing
 
     void Preview(string what)
     {
@@ -340,7 +344,9 @@ public partial class MainWindow : Window
                 foreach (var id in new[] { "read", "lift", "compile", "finish" }) Stage(id);
                 finished = outPath;
                 elapsed.Restart();
-                ShowReady(preview: true);
+                justBuilt = true;
+                ShowHome();
+                ShowVersion("v0.7.0", "v0.7.0", true, true);
                 break;
             case "problem":
                 MakeRows(update: false);
@@ -354,12 +360,8 @@ public partial class MainWindow : Window
                 break;
             default:
                 ShowHome();
-                StatusText.Text = L("Version v0.6.1, à jour.", "Version v0.6.1, up to date.");
-                if (what == "home-update")
-                {
-                    StatusText.Text = L("Version v0.6.1. La v0.7.0 est disponible.", "Version v0.6.1. v0.7.0 is available.");
-                    UpdateLink.Visibility = Visibility.Visible;
-                }
+                ShowVersion("v0.6.1", what == "home-update" ? "v0.7.0" : "v0.6.1", true, true);
+                if (what == "mods") { NavMods.IsChecked = true; ShowModsPage(preview: true); }
                 if (what == "home-mods") ShowMods(preview: 2);
                 if (what is "options" or "smooth" or "game" or "controls") NavOptions.IsChecked = true;
                 if (what == "smooth") TabSmooth.IsChecked = true;

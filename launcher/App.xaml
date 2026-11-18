@@ -156,9 +156,15 @@
       <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
       <Setter Property="Template">
         <Setter.Value>
+          <!-- (Tag: the place's icon, a Segoe glyph; BorderBrush: its page's colour, the bar at its left) -->
           <ControlTemplate TargetType="RadioButton">
-            <Border x:Name="b" Background="Transparent" CornerRadius="8" Padding="12,9">
-              <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
+            <Border x:Name="b" Background="Transparent" CornerRadius="8" Padding="0,9,10,9">
+              <DockPanel>
+                <Rectangle x:Name="bar" Width="3" Height="18" RadiusX="1.5" RadiusY="1.5" Fill="{TemplateBinding BorderBrush}" Opacity="0.55" Margin="0,0,10,0"/>
+                <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" FontWeight="Normal"
+                           Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center" Width="20" Margin="0,0,9,0"/>
+                <ContentPresenter VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
+              </DockPanel>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -166,6 +172,7 @@
               </Trigger>
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="b" Property="Background" Value="{StaticResource SideHover}"/>
+                <Setter TargetName="bar" Property="Opacity" Value="1"/>
                 <Setter Property="Foreground" Value="{StaticResource SideText}"/>
                 <Setter Property="FontWeight" Value="Bold"/>
               </Trigger>
@@ -335,6 +342,57 @@
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="line" Property="Opacity" Value="1"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- The side's small icons (the game folder, help, Discord, a problem to report): a Segoe glyph, its name in a tooltip -->
+    <Style x:Key="SideIcon" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="{StaticResource SideSoft}"/>
+      <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+      <Setter Property="FontSize" Value="17"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="b" Background="Transparent" CornerRadius="8" Width="38" Height="34">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="b" Property="Background" Value="{StaticResource SideHover}"/>
+                <Setter Property="Foreground" Value="{StaticResource SideText}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- The status card's update: gold, outlined, under the version -->
+    <Style x:Key="GoldButton" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#F3E3B8"/>
+      <Setter Property="FontFamily" Value="{StaticResource Text}"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="b" Background="#26D4A532" BorderBrush="{StaticResource Yellow}" BorderThickness="1.2" CornerRadius="8" Padding="0,7,0,8">
+              <ContentPresenter HorizontalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="b" Property="Background" Value="#4DD4A532"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>

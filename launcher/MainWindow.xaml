@@ -35,36 +35,52 @@
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions><ColumnDefinition Width="214"/><ColumnDefinition/></Grid.ColumnDefinitions>
 
-      <!-- the side: the name, where to go, what Play will do, Play -->
-      <Border x:Name="LeftColumn" Background="{StaticResource Side}" CornerRadius="12" Margin="12,0,0,12" Padding="14,16,14,14">
+      <!-- the side, the same on every page: where to go, then the game's state card (Sidebar.cs) and the small links. A thing is
+           said in one place only: the version and the update in the card, the settings on Home's cards, Play in the sky on Home
+           and in the card elsewhere -->
+      <Border x:Name="LeftColumn" Background="{StaticResource Side}" CornerRadius="12" Margin="12,0,0,12" Padding="12,16,12,10">
         <DockPanel LastChildFill="False">
           <StackPanel DockPanel.Dock="Top">
-            <TextBlock Text="Project ReLink" FontWeight="ExtraBold" FontSize="19" Foreground="{StaticResource SideText}" Margin="4,0,0,0"/>
-            <TextBlock x:Name="Subtitle" FontSize="12.5" Foreground="{StaticResource SideSoft}" TextWrapping="Wrap" Margin="4,4,0,0"/>
-            <StackPanel x:Name="NavPanel" Margin="0,20,0,0">
-              <RadioButton x:Name="NavHome" Style="{StaticResource Nav}" GroupName="Nav" IsChecked="True" Checked="NavChanged"/>
-              <RadioButton x:Name="NavOptions" Style="{StaticResource Nav}" GroupName="Nav" Checked="NavChanged"/>
+            <TextBlock Text="Project ReLink" FontWeight="ExtraBold" FontSize="19" Foreground="{StaticResource SideText}" Margin="6,0,0,0"/>
+            <StackPanel x:Name="NavPanel" Margin="0,18,0,0">
+              <RadioButton x:Name="NavHome" Style="{StaticResource Nav}" GroupName="Nav" IsChecked="True" Checked="NavChanged" Tag="&#xE80F;" BorderBrush="{StaticResource SideText}"/>
+              <RadioButton x:Name="NavOptions" Style="{StaticResource Nav}" GroupName="Nav" Checked="NavChanged" Tag="&#xE9E9;" BorderBrush="{StaticResource Red}"/>
+              <RadioButton x:Name="NavMods" Style="{StaticResource Nav}" GroupName="Nav" Checked="NavChanged" Tag="&#xEA86;" BorderBrush="{StaticResource Green}">
+                <DockPanel Width="118" LastChildFill="False">
+                  <TextBlock x:Name="NavModsText" Text="Mods"/>
+                  <Border x:Name="ModsBadge" DockPanel.Dock="Right" Background="#E0873A" CornerRadius="9" MinWidth="18" Height="18" Padding="5,0" Visibility="Collapsed">
+                    <TextBlock Text="!" FontSize="12" FontWeight="ExtraBold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  </Border>
+                </DockPanel>
+              </RadioButton>
             </StackPanel>
           </StackPanel>
           <StackPanel DockPanel.Dock="Bottom">
-            <!-- exefs mods: the code patches in mods are not the ones the game was built with (ExefsMods.cs) -->
-            <StackPanel x:Name="ModsRow" Margin="4,0,0,10" Visibility="Collapsed">
-              <TextBlock x:Name="ModsText" FontSize="12.5" Foreground="{StaticResource SideSoft}" TextWrapping="Wrap"/>
-              <Button x:Name="RebuildLink" Style="{StaticResource Link}" Foreground="{StaticResource Gold}" HorizontalAlignment="Left" Click="RebuildClick"/>
+            <!-- the state card: what (a version, the install, the update), its state in a pill, a line when there is something to
+                 say, the way from the copy to Play while it is built, and the one button that matters here -->
+            <Border x:Name="StatusCard" Background="#35303F" CornerRadius="10" Padding="12,11,12,12">
+              <StackPanel>
+                <DockPanel LastChildFill="True">
+                  <Border x:Name="StatePill" DockPanel.Dock="Right" CornerRadius="9" Padding="8,2,8,3" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock x:Name="StatePillText" FontSize="11.5" FontWeight="Bold"/>
+                  </Border>
+                  <TextBlock x:Name="CardTitle" FontSize="15" FontWeight="Bold" Foreground="{StaticResource SideText}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+                </DockPanel>
+                <TextBlock x:Name="MainNote" FontSize="12.5" Foreground="{StaticResource SideSoft}" TextWrapping="Wrap" Margin="0,5,0,0" Visibility="Collapsed"/>
+                <StackPanel x:Name="StepList" Margin="0,8,0,0" Visibility="Collapsed"/>
+                <Button x:Name="UpdateLink" Style="{StaticResource GoldButton}" Margin="0,10,0,0" Visibility="Collapsed" Click="UpdateClick"/>
+                <Button x:Name="MainButton" Style="{StaticResource Play}" Height="54" Margin="0,10,0,0" Click="MainClick">
+                  <TextBlock x:Name="MainButtonText" FontWeight="ExtraBold" FontSize="20" Foreground="White"/>
+                </Button>
+              </StackPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+              <Button x:Name="FolderLink" Style="{StaticResource SideIcon}" Content="&#xE838;" Click="OpenGameFolder"/>
+              <Button x:Name="HelpLink" Style="{StaticResource SideIcon}" Content="&#xE897;" Click="OpenHelp"/>
+              <Button x:Name="DiscordLink" Style="{StaticResource SideIcon}" Content="&#xE8BD;" Click="OpenDiscord"/>
+              <Button x:Name="ReportLink" Style="{StaticResource SideIcon}" Content="&#xEBE8;" Click="OpenReport"/>
             </StackPanel>
-            <StackPanel x:Name="StatusRow" Margin="4,0,0,10">
-              <TextBlock x:Name="StatusText" FontSize="12.5" Foreground="{StaticResource SideSoft}" TextWrapping="Wrap"/>
-              <Button x:Name="UpdateLink" Style="{StaticResource Link}" Foreground="{StaticResource Gold}" HorizontalAlignment="Left" Visibility="Collapsed" Click="UpdateClick"/>
-            </StackPanel>
-            <TextBlock x:Name="MainNote" FontSize="12.5" Foreground="{StaticResource SideSoft}" TextWrapping="Wrap" Margin="4,0,0,10"/>
-            <Button x:Name="MainButton" Style="{StaticResource Play}" Height="58" Click="MainClick">
-              <TextBlock x:Name="MainButtonText" FontWeight="ExtraBold" FontSize="21" Foreground="White"/>
-            </Button>
-            <WrapPanel Margin="4,12,0,0">
-              <Button x:Name="FolderLink" Style="{StaticResource Link}" Foreground="{StaticResource SideSoft}" FontSize="12.5" Margin="0,0,14,0" Click="OpenGameFolder"/>
-              <Button x:Name="HelpLink" Style="{StaticResource Link}" Foreground="{StaticResource SideSoft}" FontSize="12.5" Margin="0,0,14,0" Click="OpenHelp"/>
-              <Button x:Name="DiscordLink" Style="{StaticResource Link}" Foreground="{StaticResource SideSoft}" FontSize="12.5" Click="OpenDiscord"/>
-            </WrapPanel>
           </StackPanel>
         </DockPanel>
       </Border>
@@ -75,34 +91,66 @@
 
           <!-- Home: the sky over Hyrule at the player's hour, the staff with what the game needs, what Play will do -->
           <Grid x:Name="HeroView" Visibility="Collapsed">
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <Grid Height="372">
-              <Grid.Clip><RectangleGeometry Rect="0,0,844,372" RadiusX="10" RadiusY="10"/></Grid.Clip>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid x:Name="HeroSky" Height="372">
+              <Grid.Clip><RectangleGeometry x:Name="HeroClip" Rect="0,0,844,372" RadiusX="10" RadiusY="10"/></Grid.Clip>
               <Canvas x:Name="Sky" Width="844" Height="372" HorizontalAlignment="Left" VerticalAlignment="Top"/>
               <StackPanel Margin="24,20,0,0" HorizontalAlignment="Left" VerticalAlignment="Top">
                 <TextBlock Text="Ocarina of Time" FontWeight="ExtraBold" FontSize="34" Foreground="{StaticResource StaffBone}"/>
                 <TextBlock x:Name="HeroSub" FontSize="13.5" Foreground="{StaticResource StaffBone}" Opacity="0.85" Margin="2,2,0,0"/>
               </StackPanel>
               <Canvas x:Name="StaffCanvas" Width="424" Height="176" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,176,0,0"/>
+              <!-- Play, where the eye goes (what it will show: the cards under the sky) -->
+              <StackPanel HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,18">
+                <Button x:Name="HeroPlay" Style="{StaticResource Play}" Width="210" Height="58" HorizontalAlignment="Right" Click="MainClick">
+                  <TextBlock x:Name="HeroPlayText" FontWeight="ExtraBold" FontSize="22" Foreground="White"/>
+                </Button>
+              </StackPanel>
             </Grid>
-            <Grid Grid.Row="1" Margin="0,14,0,0">
-              <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
-              <Border x:Name="LooksCard" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="LooksClick">
-                <StackPanel>
-                  <TextBlock x:Name="LooksHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
-                  <TextBlock x:Name="LooksText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                  <TextBlock x:Name="LooksMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Red}" Margin="0,4,0,0"/>
-                </StackPanel>
+            <Grid Grid.Row="2" Margin="0,12,0,0">
+              <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
+              <Border x:Name="LooksCard" BorderBrush="{StaticResource Red}" BorderThickness="0,4,0,0" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="LooksClick">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="LooksMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Red}" Margin="0,4,0,0"/>
+                  <StackPanel DockPanel.Dock="Top">
+                    <TextBlock x:Name="LooksHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
+                    <TextBlock x:Name="LooksText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="LooksSub" FontSize="12.5" Foreground="{StaticResource BoneSoft}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                  </StackPanel>
+                </DockPanel>
               </Border>
-              <Border x:Name="MovesCard" Grid.Column="2" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="MovesClick">
-                <StackPanel>
-                  <TextBlock x:Name="MovesHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
-                  <TextBlock x:Name="MovesText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                  <TextBlock x:Name="MovesMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Yellow}" Margin="0,4,0,0"/>
-                </StackPanel>
+              <Border x:Name="MovesCard" Grid.Column="2" BorderBrush="{StaticResource Yellow}" BorderThickness="0,4,0,0" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="MovesClick">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="MovesMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Yellow}" Margin="0,4,0,0"/>
+                  <StackPanel DockPanel.Dock="Top">
+                    <TextBlock x:Name="MovesHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
+                    <TextBlock x:Name="MovesText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="MovesSub" FontSize="12.5" Foreground="{StaticResource BoneSoft}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+              <Border x:Name="ModsCard" Grid.Column="4" BorderBrush="{StaticResource Green}" BorderThickness="0,4,0,0" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="ModsCardClick">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="ModsMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Green}" Margin="0,4,0,0"/>
+                  <StackPanel DockPanel.Dock="Top">
+                    <TextBlock x:Name="ModsHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
+                    <TextBlock x:Name="ModsCardText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ModsSub" FontSize="12.5" Foreground="{StaticResource BoneSoft}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                  </StackPanel>
+                </DockPanel>
+              </Border>
+              <Border x:Name="NewsCard" Grid.Column="6" BorderBrush="{StaticResource Blue}" BorderThickness="0,4,0,0" Background="#E5DECE" CornerRadius="10" Padding="14,10,14,10" Cursor="Hand" MouseLeftButtonDown="NewsCardClick">
+                <DockPanel LastChildFill="False">
+                  <TextBlock DockPanel.Dock="Bottom" x:Name="NewsMore" FontSize="12.5" FontWeight="Medium" Foreground="{StaticResource Blue}" Margin="0,4,0,0"/>
+                  <StackPanel DockPanel.Dock="Top">
+                    <TextBlock x:Name="NewsHead" FontSize="12.5" Foreground="{StaticResource BoneSoft}"/>
+                    <TextBlock x:Name="NewsText" FontSize="14.5" FontWeight="Bold" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="NewsSub" FontSize="12.5" Foreground="{StaticResource BoneSoft}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                  </StackPanel>
+                </DockPanel>
               </Border>
             </Grid>
-            <TextBlock x:Name="HeroFoot" Grid.Row="3" FontSize="12.5" Foreground="{StaticResource BoneFaint}" Margin="2,10,0,0"/>
+            <TextBlock x:Name="HeroFoot" Grid.Row="4" FontSize="12.5" Foreground="{StaticResource BoneFaint}" Margin="2,10,0,0"/>
           </Grid>
 
           <!-- install: the player's copy, and where the game goes -->
@@ -159,19 +207,6 @@
             </StackPanel>
           </Grid>
 
-          <!-- the game is ready -->
-          <Grid x:Name="ReadyView" Visibility="Collapsed">
-            <Grid.Resources>
-              <StaticResource x:Key="Accent" ResourceKey="Green"/><StaticResource x:Key="AccentTint" ResourceKey="GreenTint"/><StaticResource x:Key="AccentEdge" ResourceKey="GreenEdge"/>
-            </Grid.Resources>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-            <Border Style="{StaticResource Strip}" Background="{StaticResource Green}"><TextBlock x:Name="ReadyTitle" Style="{StaticResource ViewTitle}"/></Border>
-            <TextBlock x:Name="ReadyNote" Grid.Row="1" Style="{StaticResource Body}" Margin="2,10,0,10"/>
-            <StackPanel x:Name="ReadyRows" Grid.Row="2"/>
-            <Button x:Name="ReadySettings" Grid.Row="3" Style="{StaticResource Link}" HorizontalAlignment="Left" Margin="2,18,0,0" Click="ReadyToHome"/>
-          </Grid>
 
           <!-- something went wrong -->
           <Grid x:Name="ProblemView" Visibility="Collapsed">
@@ -199,6 +234,25 @@
           </Grid>
 
           <!-- the options: the in-game menu's layout, a page a colour (Home.cs makes the rows) -->
+          <!-- Mods: what is in the game folder's mods, on or off -->
+          <Grid x:Name="ModsView" Visibility="Collapsed">
+            <Grid.Resources>
+              <StaticResource x:Key="Accent" ResourceKey="Green"/><StaticResource x:Key="AccentTint" ResourceKey="GreenTint"/><StaticResource x:Key="AccentEdge" ResourceKey="GreenEdge"/>
+            </Grid.Resources>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Border Style="{StaticResource Strip}" Background="{StaticResource Green}" HorizontalAlignment="Left">
+              <TextBlock x:Name="ModsTitle" FontWeight="Bold" FontSize="16" Foreground="White"/>
+            </Border>
+            <TextBlock x:Name="ModsIntro" Grid.Row="1" Style="{StaticResource Body}" Margin="2,10,0,8"/>
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+              <StackPanel x:Name="ModsList"/>
+            </ScrollViewer>
+            <WrapPanel Grid.Row="3" Margin="2,10,0,0">
+              <Button x:Name="ModsOpenFolder" Style="{StaticResource Link}" Foreground="{StaticResource Green}" Margin="0,0,22,0" Click="OpenModsFolder"/>
+              <Button x:Name="ModsRebuild" Style="{StaticResource Link}" Foreground="{StaticResource Green}" Visibility="Collapsed" Click="RebuildClick"/>
+            </WrapPanel>
+          </Grid>
+
           <Grid x:Name="HomeView" Visibility="Collapsed">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
