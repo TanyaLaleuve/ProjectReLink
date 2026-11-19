@@ -964,7 +964,7 @@ __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGr
         return VK_ERROR_UNKNOWN;
     }
 }
-__declspec(noinline) VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+__declspec(noinline) VkResult guarded_compute_once(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
     __try {
         return vkCreateComputePipelines(dev.device, cache, 1, ci, nullptr, pl);
     } __except (1) {
@@ -1020,7 +1020,7 @@ VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateI
     fault_armed = 0;
     return r;
 }
-VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+VkResult guarded_compute_once(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
     install_driver_fault_guard();
     if (sigsetjmp(fault_jmp, 1) != 0) {
         logf("vk: the driver faulted compiling a compute pipeline: that one is left out");
@@ -1032,6 +1032,23 @@ VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInf
     return r;
 }
 #endif
+/// (relink) A compute pipeline the driver's compiler fails on (AMD's crashes, -13, or faults, -77, on some programs) is built
+/// again without its optimizer, as a graphics one is (build_graphics): run a little slower rather than left out
+VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
+    const VkResult r = guarded_compute_once(cache, ci, pl);
+    if (r == VK_SUCCESS || r == VK_ERROR_OUT_OF_HOST_MEMORY || r == VK_ERROR_OUT_OF_DEVICE_MEMORY ||
+        (ci->flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT))
+        return r;
+    VkComputePipelineCreateInfo again = *ci;
+    again.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    *pl = VK_NULL_HANDLE;
+    const VkResult second = guarded_compute_once(cache, &again, pl);
+    static std::atomic<int> told{0};
+    if (told++ < 20)
+        logf("vk: a compute pipeline failed (%d) with the driver's optimizer: %s", (int)r,
+             second == VK_SUCCESS ? "made without it" : "not made without it either");
+    return second;
+}
 VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at, VkPrimitiveTopology topo, int part = -1);
 thread_local bool driver_cache_only = false;   // (predict_run's: pipelines for the driver's own cache, not into ours)
 
@@ -1833,7 +1850,23 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
             }
         }
     }
-    const VkResult r = guarded_graphics(part >= 0 || driver_cache_only ? VK_NULL_HANDLE : pcache, &ci, &pl);
+    VkResult r = guarded_graphics(part >= 0 || driver_cache_only ? VK_NULL_HANDLE : pcache, &ci, &pl);
+    // (relink, Discord: Artspear, the Market's and Kakariko's dogs white on an RX 6600 in 0.7.9.1: "graphics pipeline for
+    // 4e5ce183a33b0855 not made (-13)") A driver whose compiler fails on a program (AMD's proprietary one crashes, -13, on some
+    // Ocarina shaders, the dogs' among them since they are translated for 64-lane groups; 5fa56485a6b07619 and 6eaa646d07ea4e43 on
+    // an RX 6600 XT since 0.7.8) builds it again without its optimizer, which it does: the draws are then drawn, a little slower,
+    // instead of left out. Not for the memory errors, which the optimizer does not cause
+    if (r != VK_SUCCESS && r != VK_ERROR_OUT_OF_HOST_MEMORY && r != VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+        !(ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) {
+        const VkResult first = r;
+        ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+        pl = VK_NULL_HANDLE;
+        r = guarded_graphics(part >= 0 || driver_cache_only ? VK_NULL_HANDLE : pcache, &ci, &pl);
+        static std::atomic<int> told{0};
+        if (told++ < 20)
+            logf("vk: %s %016llx failed (%d) with the driver's optimizer: %s", part >= 0 ? "a library of" : "graphics pipeline for",
+                 (unsigned long long)p.key, (int)first, r == VK_SUCCESS ? "made without it" : "not made without it either");
+    }
     if (part >= 0) {
         if (r != VK_SUCCESS) {
             static std::atomic<int> logged;
@@ -5521,6 +5554,7 @@ std::mutex mesh_ring_mu;
 uint64_t mesh_ring_at = 0;
 thread_local VkBuffer mesh_conv_buf = VK_NULL_HANDLE;   // (the converted records for the draw in progress)
 thread_local uint64_t mesh_conv_off = 0;
+thread_local uint32_t mesh_conv_n = 0;   // (how many records were converted: the draw asks for no more)
 bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     mesh_conv_buf = VK_NULL_HANDLE;
     static const bool raw = getenv("RX_VK_MESH_IND_RAW") && atoi(getenv("RX_VK_MESH_IND_RAW")) != 0;
@@ -5530,6 +5564,11 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     if (raw || rewrite || !d.mesh || !d.indirect) return false;
     PROF_EXACT();   // (a pass ended and three barriers: not one of the cheap per-draw steps PROF_DRAW samples)
     const uint32_t n = (uint32_t)std::clamp(d.max, 1, 4096);
+    if (d.max < 1 || d.max > 4096) {   // (relink, issue 109: the draw asked the driver for d.max records where n were converted)
+        static std::atomic<int> told{0};
+        if (told++ < 10)
+            logf("vk: a mesh indirect draw of %d records: %u converted and drawn", d.max, n);
+    }
     const uint32_t stride = d.stride > 0 ? (uint32_t)d.stride : 8;
     const BufferRef args = gpu_buffer_bind(d.indirect, (uint64_t)(n - 1) * stride + 4 * (word + 1), false);
     if (!args) return false;
@@ -5564,7 +5603,7 @@ bool mesh_indirect_convert(VkCommandBuffer cmd, const DrawArgs& d) {
     mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
     mb.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, mb.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
     vkCmdPipelineBarrier2(cmd, &di);
-    mesh_conv_buf = mesh_ring, mesh_conv_off = off;
+    mesh_conv_buf = mesh_ring, mesh_conv_off = off, mesh_conv_n = n;
     return true;
 }
 } // namespace
@@ -6863,9 +6902,9 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
                 {
                     FINE_SCOPE(FT_MESH_CALL);
                     if (cnt && vkCmdDrawMeshTasksIndirectCountEXT)
-                        vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_conv_buf, mesh_conv_off, cnt.buffer, cnt.offset, d.max, 12);
+                        vkCmdDrawMeshTasksIndirectCountEXT(cmd, mesh_conv_buf, mesh_conv_off, cnt.buffer, cnt.offset, mesh_conv_n, 12);
                     else
-                        vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_conv_buf, mesh_conv_off, std::max(d.max, 1), 12);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, mesh_conv_buf, mesh_conv_off, mesh_conv_n, 12);
                 }
                 mesh_conv_buf = VK_NULL_HANDLE;
                 st_mesh++;
