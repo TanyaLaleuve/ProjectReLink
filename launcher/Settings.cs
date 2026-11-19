@@ -102,6 +102,8 @@ sealed class Settings
     public string UiLanguage = Texts.French ? "fr" : "en";
     /// The launcher's look: light (the default) or dark (Theme.cs reads it when the launcher opens)
     public string LauncherTheme = Theme.Chosen;
+    /// The in-game menu's look (the game's Menu look row, menu_look: 0 light, 1 dark): the launcher's look row sets it too
+    public int MenuLook = 0;
     public string Language = Texts.GameLanguageOfWindows();
     /// The game folder (empty: none yet)
     public string Folder = "";
@@ -185,6 +187,7 @@ sealed class Settings
         Ultrawide = Int(g, "ultrawide", 0, 0, 1);
         FpsCounter = Int(g, "fps_counter", 0, 0, 1);
         Upscaler = Int(g, "dlss", 0, 0, 4);
+        MenuLook = Int(g, "menu_look", 0, 0, 1);
         other.Clear();
         foreach (var (k, v) in g)
             if (!Known.Contains(k)) other[k] = v;
@@ -205,7 +208,7 @@ sealed class Settings
     static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
         "fullscreen", "frame_generation", "frame_pacing", "v-sync", "frame_rate", "resolution", "upscaling", "sharpness", "game_speed",
-        "handheld_profile", "ultrawide", "fps_counter", "dlss",
+        "handheld_profile", "ultrawide", "fps_counter", "dlss", "menu_look",
     };
 
     public void Save()
@@ -238,6 +241,7 @@ sealed class Settings
         Row("ultrawide", Ultrawide);
         Row("fps_counter", FpsCounter);
         Row("dlss", Upscaler);
+        Row("menu_look", MenuLook);
         foreach (var (k, v) in other) g.Append(k).Append('=').Append(v).Append('\n');
         File.WriteAllText(GameIni, g.ToString());
 

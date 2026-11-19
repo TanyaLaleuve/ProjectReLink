@@ -127,7 +127,7 @@ public partial class MainWindow
                   L("Le changement se voit à la prochaine ouverture de ReLink.", "The change shows the next time ReLink opens."),
                   "UiLanguage", (0, "English"), (1, "Français"));
         ThemeGroup = ChoiceRow(RowsGame, L("Apparence du lanceur", "Launcher look"),
-                  L("Le changement se voit à la prochaine ouverture de ReLink.", "The change shows the next time ReLink opens."),
+                  L("Le menu en jeu (Insert ou F1) la suit aussi. Le lanceur change à sa prochaine ouverture.", "The in-game menu (Insert or F1) follows it too. The launcher changes the next time it opens."),
                   "Theme", (0, L("Clair", "Light")), (1, L("Sombre", "Dark")));
         SwitchRow(RowsGame, L("Son", "Sound"), null, out Audio, out _);
         SwitchRow(RowsGame, L("Profil portable", "Handheld profile"),
@@ -393,7 +393,7 @@ public partial class MainWindow
         OnPick(SpeedGroup, v => s.GameSpeed = v);
         OnPick(FramegenGroup, v => s.FrameGeneration = v);
         OnPick(UiLanguageGroup, v => s.UiLanguage = v == 1 ? "fr" : "en");
-        OnPick(ThemeGroup, v => s.LauncherTheme = v == 1 ? Theme.Dark : Theme.Light);
+        OnPick(ThemeGroup, v => { s.LauncherTheme = v == 1 ? Theme.Dark : Theme.Light; s.MenuLook = v; });   // (the in-game menu too)
         Sharpness.ValueChanged += (_, e) =>
         {
             SharpnessText.Text = $"{(int)e.NewValue} %";
