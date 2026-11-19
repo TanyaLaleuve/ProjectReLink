@@ -100,6 +100,8 @@ sealed class Settings
     public bool NvidiaDlss = false;
     /// The launcher's own language: en (the default) or fr (Texts.cs reads it when the launcher opens)
     public string UiLanguage = Texts.French ? "fr" : "en";
+    /// The launcher's look: light (the default) or dark (Theme.cs reads it when the launcher opens)
+    public string LauncherTheme = Theme.Chosen;
     public string Language = Texts.GameLanguageOfWindows();
     /// The game folder (empty: none yet)
     public string Folder = "";
@@ -151,6 +153,7 @@ sealed class Settings
         s.InvertY = Bool(l, "invert_y", false);
         s.NvidiaDlss = Bool(l, "nvidia_dlss", false);
         if (l.TryGetValue("ui_language", out var ui) && ui is "en" or "fr") s.UiLanguage = ui;
+        if (l.TryGetValue("theme", out var th) && th is Theme.Light or Theme.Dark) s.LauncherTheme = th;
         var here = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var candidates = new[]
         {
@@ -214,6 +217,7 @@ sealed class Settings
         sb.AppendLine($"invert_y={(InvertY ? 1 : 0)}");
         sb.AppendLine($"nvidia_dlss={(NvidiaDlss ? 1 : 0)}");
         sb.AppendLine($"ui_language={UiLanguage}");
+        sb.AppendLine($"theme={LauncherTheme}");
         sb.AppendLine($"game_folder={Folder}");
         Directory.CreateDirectory(Storage.Base);
         File.WriteAllText(LauncherIni, sb.ToString());
