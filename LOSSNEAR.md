@@ -53,3 +53,19 @@ Pas encore écrit pour Linux : l'option n'y a pas d'effet.
 - `--user <dossier>` : un dossier de sauvegardes par profil.
 - `RELINK_NO_UPDATE_CHECK=1` : pas de recherche de mise à jour.
 - Le premier démarrage écrit son avancement dans `relink_log.txt` (« about N min left »).
+
+## La publication
+
+Ce fork ne publie rien lui-même : aucune release, aucune étiquette. Les outils que Lossnear installe (case Switch 2 de
+l'écran des émulateurs) sont assemblés et publiés par le dépôt de l'application, workflow
+`publier-relink.yml`, lancé à la main avec trois entrées : la version amont dont part le fork (`v0.7.9.4`), l'empreinte
+SHA-256 de son paquet Windows officiel, et la branche ou le commit du fork (`lossnear/fork`).
+
+Le paquet publié est le paquet officiel, vérifié fichier par fichier contre le source de son étiquette, avec par-dessus
+les fichiers que ce fork change dans `assets`, `gpu`, `host`, `nx2`, `scripts`, `third_party` et `tools`. Le reste du
+fork (`lossnear/`, ce fichier, la CI) n'y entre pas. L'archive du source du commit est publiée à côté.
+
+**Un fichier de `gpu/` changé fait recompiler le rendu chez le joueur** (environ 500 fichiers en plus) : la DLL
+précompilée de l'amont ne correspond plus à sa clé. Les ajouts vont donc dans `host/` tant que c'est possible.
+
+Première publication : `0.7.9.4-lossnear.2026.11.25-4aabefb` (la manette virtuelle).
