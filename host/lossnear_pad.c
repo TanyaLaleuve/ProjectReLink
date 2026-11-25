@@ -254,6 +254,13 @@ int lossnear_pad_read(uint32_t *raw, uint64_t *sw, int32_t stick[4]) {
     for (int i = 0; i < HOS_SW_N; i++)
         if (r >> vers_switch[i] & 1) s |= 1ULL << i;
     *sw = s;
+    /* (avec LOSSNEAR_TRACE_MANETTE=1 : ce que le JEU recoit, a chaque changement - read_input est appele quand le jeu lit ses
+       manettes. C'est la preuve que les boutons arrivent la ou il les lit, et pas seulement dans le tube) */
+    static uint64_t dernier = ~0ULL;
+    if (trace && s != dernier) {
+        dernier = s;
+        hos_log("lossnear: virtual pad to the game %05llX", (unsigned long long)s);
+    }
     /* (Y retourne : SDL le compte vers le bas, la Switch vers le haut. L'inversion de la camera reste celle du menu
        Insert, comme pour une manette SDL ; la zone morte est deja appliquee par l'application, liaison par liaison) */
     const int inv_x = rx_option(16, 0), inv_y = rx_option(17, 0);
