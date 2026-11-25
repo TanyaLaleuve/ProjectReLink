@@ -55,10 +55,16 @@ jobs:
             lossnear/tests/test_manette.c host/lossnear_pad.c -o "$RUNNER_TEMP/test_manette.exe"
           "$RUNNER_TEMP/test_manette.exe"
 
-      # (les en-tetes que la fabrication genere d'habitude au moment de traduire le jeu : ceux du runtime ne dependent pas de lui)
+      # (les en-tetes que la fabrication genere d'habitude au moment de traduire le jeu : ceux du runtime ne dependent pas de lui.
+      # Le generateur construit la DLL du traducteur de suyu pour la cible MSVC : il lui faut l'environnement de Visual Studio)
+      - name: En-tetes du runtime, sans jeu
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS=%%i"
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
+          python -I lossnear\tests\en_tetes_runtime.py . "%RUNNER_TEMP%\en-tetes" || exit /b 1
       - name: Compilation a blanc des fichiers de host/ touches
         run: |
-          python -I lossnear/tests/en_tetes_runtime.py . "$RUNNER_TEMP/en-tetes"
           for f in host/lossnear_pad.c host/nn_hid.c host/hos_main.c; do
             echo "== $f"
             "$LLVM_MINGW/bin/x86_64-w64-mingw32-clang" -fsyntax-only -march=x86-64-v3 -O2 -mcx16 -DA64_POLLING \
