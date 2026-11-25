@@ -1,0 +1,66 @@
+# (lossnear) Les epreuves des ajouts Lossnear de ce fork, SANS JEU : la manette virtuelle (lossnear/tests/test_manette.c,
+# un faux Lossnear qui envoie des trames dans le tube) et la compilation a blanc des fichiers de host/ que nos ajouts
+# touchent, avec les options de nx2/build.py. NE PUBLIE RIEN : ni release, ni artefact. Le jeu fabrique ne vient jamais ici.
+name: Epreuves Lossnear
+
+on:
+  push:
+    branches: ['essai/**', 'lossnear/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  epreuves:
+    name: Manette virtuelle et compilation de host/
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      # (le meme llvm-mingw que les joueurs : sa version officielle, SHA-256 verifiee par scripts/release_parts.py)
+      - name: llvm-mingw version
+        id: llvm
+        run: echo "name=$(python -I scripts/release_parts.py llvm-mingw --name)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/llvm
+          key: ${{ steps.llvm.outputs.name }}
+      - name: llvm-mingw
+        run: |
+          dir=$(python -I scripts/release_parts.py llvm-mingw "$RUNNER_TEMP/llvm")
+          echo "LLVM_MINGW=$dir" >> "$GITHUB_ENV"
+          echo "$dir/bin" >> "$GITHUB_PATH"
+
+      - name: Epreuve de la manette virtuelle
+        timeout-minutes: 5
+        run: |
+          "$LLVM_MINGW/bin/x86_64-w64-mingw32-clang" -O2 -march=x86-64-v3 -Wall -Wextra -Ihost -Igpu/vk \
+            lossnear/tests/test_manette.c host/lossnear_pad.c -o "$RUNNER_TEMP/test_manette.exe"
+          "$RUNNER_TEMP/test_manette.exe"
+
+      # (les en-tetes que la fabrication genere d'habitude au moment de traduire le jeu : ceux du runtime ne dependent pas de lui)
+      - name: Compilation a blanc des fichiers de host/ touches
+        run: |
+          python -I lossnear/tests/en_tetes_runtime.py . "$RUNNER_TEMP/en-tetes"
+          for f in host/lossnear_pad.c host/nn_hid.c host/hos_main.c; do
+            echo "== $f"
+            "$LLVM_MINGW/bin/x86_64-w64-mingw32-clang" -fsyntax-only -march=x86-64-v3 -O2 -mcx16 -DA64_POLLING \
+              -Ihost -I"$RUNNER_TEMP/en-tetes/rt64" -I"$RUNNER_TEMP/en-tetes/gen" -Ithird_party/opus/include "$f"
+          done

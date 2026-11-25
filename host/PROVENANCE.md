@@ -1,5 +1,9 @@
 # host/: the standalone runtime
 
+(lossnear) This fork adds `lossnear_pad.c` and `lossnear_pad.h`, the Lossnear console's virtual pad, and hooks them into
+`hos_main.c` (`--virtual-pad-pipe`) and `nn_hid.c` (`read_input`, `GetSixAxisSensorStates`). See `LOSSNEAR.md` at the
+root.
+
 A fork of the Horizon OS layer of NotRexed's a64-kit (`hos/`, TOTKPort commit `e88744a`, 2026-10-31), the runtime
 that runs Tears of the Kingdom natively. It replaces the Nintendo SDK at the `nn::` boundary: an
 `HLE(<mangled name>)` function here stands in for that SDK function wherever the game calls it

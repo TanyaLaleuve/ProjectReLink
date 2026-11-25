@@ -1496,6 +1496,10 @@ static int game_main(int argc, char **argv) {
         if (!strcmp(argv[i], "--romfs") && i + 1 < argc) hos_romfs_dir = argv[++i];
         else if (!strcmp(argv[i], "--user") && i + 1 < argc) hos_user_dir = argv[++i];
         else if (!strcmp(argv[i], "--trace")) hos_trace = 1;
+        else if (!strcmp(argv[i], "--virtual-pad-pipe") && i + 1 < argc) {   /* (lossnear) host/lossnear_pad.c */
+            void lossnear_pad_start(const char *canal);
+            lossnear_pad_start(argv[++i]);
+        }
         else if (!strcmp(argv[i], "--prepare-shaders")) {   /* (relink) a build's last step: no game */
 #ifdef _WIN32
             _putenv("RELINK_PREPARE_ONLY=1");

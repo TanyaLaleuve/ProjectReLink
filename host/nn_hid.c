@@ -36,6 +36,7 @@
 #include "../gpu/vk/vk_api.h"   /* (the controls' names: HOS_SW_*, HOS_PAD_*) */
 #include "hos_motion.h"
 #include "hos_stick.h"
+#include "lossnear_pad.h"   /* (lossnear) la manette virtuelle de la console Lossnear */
 
 enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN };
 #define STATE_SIZE 0x28
@@ -866,6 +867,25 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
         if (hos_mouse_test_on()) (void)mouse_input(buttons, stick);
         return;
     }
+    {   /* (lossnear) LA MANETTE VIRTUELLE DE LA CONSOLE LOSSNEAR (lossnear_pad.c) : tant que son tube est branche, elle est
+           le seul appareil du joueur - l'application melange deja ses manettes, son clavier et sa souris par son preset - et
+           elle compte la fenetre du jeu devant ou non. Le menu Insert la suit comme une manette (pad_raw_now), et la garde
+           pour lui tant qu'il est ouvert puis jusqu'au relachement, comme les manettes plus bas. */
+        uint32_t raw;
+        uint64_t sw;
+        int32_t s[4];
+        if (lossnear_pad_read(&raw, &sw, s)) {
+            InterlockedExchange(&pad_raw_now, (LONG)raw);
+            static int after_menu;
+            if (rx_option(1, 0)) after_menu = 1;
+            else if (after_menu && !raw) after_menu = 0;
+            if (!after_menu) {
+                *buttons |= sw;
+                stick_max(stick, s);
+            }
+            return;
+        }
+    }
     /* (relink, issue 389) A scripted press (HOS_INPUT_SCRIPT, HOS_INPUT_LIVE) is the test's own, not the
        player's: it counts with the game's window behind another one, so a test run can drive the game on one
        monitor while the player works in the front window. HOS_INPUT_BACKGROUND still decides the pads. */
@@ -1033,7 +1053,8 @@ HLE(_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxi
     static const float at_rest[18] = {0, 0, -1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1};
     int hos_sdl_motion_history(HosMotionSample *out, int max);   /* pad_sdl.c */
     HosMotionSample h[HOS_MOTION_HISTORY];
-    const int live = count ? hos_sdl_motion_history(h, count) : 0;
+    /* (lossnear) le gyroscope de la manette virtuelle tant que son tube est branche, jamais les deux a la fois */
+    const int live = !count ? 0 : lossnear_pad_connected() ? lossnear_pad_motion_history(h, count) : hos_sdl_motion_history(h, count);
     if (live) {
         if (!was_live || six_base + h[0].n < six_sampling) six_base = six_sampling + 1 - h[0].n;
         six_sampling = six_base + h[0].n;
